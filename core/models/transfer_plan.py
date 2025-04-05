@@ -13,6 +13,12 @@ import opentimelineio as otio
 
 from .timeline import Timeline
 from .transfer_segment import TransferSegment
+from ..utils import (
+    normalize_handles,
+    ensure_rational_time,
+    duration_to_seconds,
+    rescale_time
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -48,10 +54,13 @@ class TransferPlan:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             name = f"TransferPlan_{timestamp}"
 
+        # Normalize handle values
+        start_handles, end_handles = normalize_handles(start_handles, end_handles)
+
         self.name = name
         self.min_gap_duration = min_gap_duration
         self.start_handles = start_handles
-        self.end_handles = end_handles if end_handles is not None else start_handles
+        self.end_handles = end_handles
         self.metadata = metadata or {}
 
         # Collection of segments in this plan
@@ -156,9 +165,7 @@ class TransferPlan:
         total_duration = otio.opentime.RationalTime(0, 24)
         for segment in self.segments:
             # Ensure consistent rate
-            duration = segment.duration
-            if duration.rate != total_duration.rate:
-                duration = duration.rescaled_to(total_duration.rate)
+            duration = rescale_time(segment.duration, total_duration.rate)
             total_duration += duration
 
         # Count unique source files
@@ -174,9 +181,7 @@ class TransferPlan:
 
             source_duration = otio.opentime.RationalTime(0, 24)
             for segment in source_segments:
-                duration = segment.duration
-                if duration.rate != source_duration.rate:
-                    duration = duration.rescaled_to(source_duration.rate)
+                duration = rescale_time(segment.duration, source_duration.rate)
                 source_duration += duration
 
             duration_by_source[source] = source_duration
@@ -223,14 +228,11 @@ class TransferPlan:
         if original_durations:
             for source, duration in original_durations.items():
                 # Convert to RationalTime if needed
-                if isinstance(duration, float):
-                    # Default to 24fps if we don't know better
-                    duration = otio.opentime.RationalTime(duration * 24, 24)
+                if not isinstance(duration, otio.opentime.RationalTime):
+                    duration = ensure_rational_time(duration)
 
                 # Ensure consistent rate
-                if duration.rate != original_duration.rate:
-                    duration = duration.rescaled_to(original_duration.rate)
-
+                duration = rescale_time(duration, original_duration.rate)
                 original_duration += duration
         else:
             # Rough estimate: Find earliest and latest points in each source
@@ -255,9 +257,7 @@ class TransferPlan:
                 source_duration = times['latest'] - times['earliest']
 
                 # Ensure consistent rate
-                if source_duration.rate != original_duration.rate:
-                    source_duration = source_duration.rescaled_to(original_duration.rate)
-
+                source_duration = rescale_time(source_duration, original_duration.rate)
                 original_duration += source_duration
 
         # Calculate savings

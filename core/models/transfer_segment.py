@@ -12,6 +12,10 @@ from typing import Optional, Dict, List, Any, Set
 import opentimelineio as otio
 
 from .timeline_clip import TimelineClip
+from ..utils import (
+    duration_to_seconds,
+    rescale_time
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -75,7 +79,7 @@ class TransferSegment:
 
     def get_duration_seconds(self) -> float:
         """Get the duration in seconds."""
-        return self.duration.value / self.duration.rate
+        return duration_to_seconds(self.duration)
 
     def add_timeline_clip(self, clip: TimelineClip) -> None:
         """
@@ -101,13 +105,8 @@ class TransferSegment:
             return False
 
         # Ensure we're comparing times with the same rate
-        start = clip.source_start
-        end = clip.source_end
-
-        if start.rate != self.source_start.rate:
-            start = start.rescaled_to(self.source_start.rate)
-        if end.rate != self.source_end.rate:
-            end = end.rescaled_to(self.source_end.rate)
+        start = rescale_time(clip.source_start, self.source_start.rate)
+        end = rescale_time(clip.source_end, self.source_end.rate)
 
         # Check if this segment fully contains the clip
         return start >= self.source_start and end <= self.source_end
@@ -126,13 +125,8 @@ class TransferSegment:
             return False
 
         # Ensure we're comparing times with the same rate
-        start = clip.source_start
-        end = clip.source_end
-
-        if start.rate != self.source_start.rate:
-            start = start.rescaled_to(self.source_start.rate)
-        if end.rate != self.source_end.rate:
-            end = end.rescaled_to(self.source_end.rate)
+        start = rescale_time(clip.source_start, self.source_start.rate)
+        end = rescale_time(clip.source_end, self.source_end.rate)
 
         # Check for overlap
         return not (end <= self.source_start or start >= self.source_end)

@@ -15,6 +15,12 @@ from typing import Dict, List, Optional, Any, Union
 import opentimelineio as otio
 
 from ..models import TimelineClip, Timeline, TransferSegment
+from ..utils import (
+    ensure_rational_time,
+    ensure_non_negative_time,
+    normalize_handles,
+    apply_handles_to_range, rescale_time
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -169,9 +175,7 @@ class GapDetector:
                 duration = gap['duration']
 
                 # Ensure we're using a consistent rate
-                if duration.rate != total_gap_duration.rate:
-                    duration = duration.rescaled_to(total_gap_duration.rate)
-
+                duration = rescale_time(duration, total_gap_duration.rate)
                 total_gap_duration += duration
                 source_gap_duration += duration
 
@@ -201,9 +205,8 @@ class GapDetector:
         Returns:
             List of TransferSegment objects with optimized source ranges
         """
-        # If end_handles is not specified, use the same value as start_handles
-        if end_handles is None:
-            end_handles = start_handles
+        # Normalize handle values
+        start_handles, end_handles = normalize_handles(start_handles, end_handles)
 
         # Get all clips for this source
         clips = self.clips_by_source.get(source_file, [])
@@ -236,19 +239,15 @@ class GapDetector:
         if frame_rate is None:
             frame_rate = 24
 
-        # Convert handles to time units
-        start_handle_time = otio.opentime.RationalTime(start_handles, frame_rate)
-        end_handle_time = otio.opentime.RationalTime(end_handles, frame_rate)
-
         # If no significant gaps, merge all clips into one range
         if not gaps:
             # Create a single range covering all clips
-            range_start = sorted_clips[0].source_start - start_handle_time
-            range_end = sorted_clips[-1].source_end + end_handle_time
-
-            # Ensure range_start is not negative
-            if range_start.value < 0:
-                range_start = otio.opentime.RationalTime(0, range_start.rate)
+            range_start, range_end = apply_handles_to_range(
+                sorted_clips[0].source_start,
+                sorted_clips[-1].source_end,
+                start_handles,
+                end_handles
+            )
 
             segment_name = f"{os.path.basename(source_file)}_consolidated"
             segment = TransferSegment(
@@ -290,12 +289,12 @@ class GapDetector:
             # If we've reached a boundary, create a consolidated range
             if is_last_clip or is_before_gap:
                 if current_group:
-                    range_start = current_group[0].source_start - start_handle_time
-                    range_end = current_group[-1].source_end + end_handle_time
-
-                    # Ensure range_start is not negative
-                    if range_start.value < 0:
-                        range_start = otio.opentime.RationalTime(0, range_start.rate)
+                    range_start, range_end = apply_handles_to_range(
+                        current_group[0].source_start,
+                        current_group[-1].source_end,
+                        start_handles,
+                        end_handles
+                    )
 
                     segment_name = f"{os.path.basename(source_file)}_opt_{len(optimized_segments) + 1}"
                     segment = TransferSegment(
@@ -326,6 +325,9 @@ class GapDetector:
         Returns:
             List of TransferSegment objects with optimized source ranges for all sources
         """
+        # Normalize handle values
+        start_handles, end_handles = normalize_handles(start_handles, end_handles)
+
         all_optimized = []
 
         for source_file in self.clips_by_source:

@@ -8,14 +8,18 @@ better object-oriented design and cleaner code.
 
 import logging
 import os
-from typing import Dict, List, Set, Optional, Tuple, Any, Union
 from collections import defaultdict
+from typing import Dict, List, Optional, Any, Union
 
 import opentimelineio as otio
 
-from ..file_manager import FileManager
-from ..models import SourceClip, TimelineClip, Timeline, TransferSegment, TransferPlan
 from .gap_detector import GapDetector
+from ..file_manager import FileManager
+from ..models import TimelineClip, Timeline, TransferSegment, TransferPlan
+from ..utils import (
+    normalize_handles,
+    apply_handles_to_range
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -96,7 +100,16 @@ class TimelineAnalyzer:
         Returns:
             List of added Timeline objects
         """
-        return [self.add_timeline(path, fps) for path in timeline_paths]
+        added_timelines = []
+        for path in timeline_paths:
+            try:
+                timeline = self.add_timeline(path, fps)
+                added_timelines.append(timeline)
+            except Exception as e:
+                logger.error(f"Failed to add timeline {path}: {str(e)}")
+                # Continue with other timelines instead of failing completely
+
+        return added_timelines
 
     def get_unique_sources(self) -> List[str]:
         """
@@ -164,12 +177,21 @@ class TimelineAnalyzer:
 
         return dict(clips_by_source)
 
+    def _get_gap_detector(self) -> GapDetector:
+        """
+        Helper method to create a GapDetector with our clips.
+
+        Returns:
+            GapDetector instance configured with our clips
+        """
+        return GapDetector(self._get_clips_by_source())
+
+    # The following methods delegate to GapDetector to avoid code duplication
+
     def find_gaps(self, source_file: str,
                   min_gap_duration: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Find gaps (unused regions) in a source file.
-
-        Uses GapDetector to avoid code duplication.
 
         Args:
             source_file: Path to the source file
@@ -179,15 +201,11 @@ class TimelineAnalyzer:
         Returns:
             List of dictionaries describing gaps in the source file
         """
-        # Create a gap detector with our clips
-        gap_detector = GapDetector(self._get_clips_by_source())
-        return gap_detector.find_gaps(source_file, min_gap_duration)
+        return self._get_gap_detector().find_gaps(source_file, min_gap_duration)
 
     def find_all_gaps(self, min_gap_duration: Optional[float] = None) -> Dict[str, List[Dict[str, Any]]]:
         """
         Find gaps in all source files.
-
-        Uses GapDetector to avoid code duplication.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant.
@@ -196,15 +214,11 @@ class TimelineAnalyzer:
         Returns:
             Dictionary mapping source files to lists of gaps
         """
-        # Create a gap detector with our clips
-        gap_detector = GapDetector(self._get_clips_by_source())
-        return gap_detector.find_all_gaps(min_gap_duration)
+        return self._get_gap_detector().find_all_gaps(min_gap_duration)
 
     def calculate_gap_savings(self, min_gap_duration: Optional[float] = None) -> Dict[str, Any]:
         """
         Calculate potential savings from skipping gaps.
-
-        Uses GapDetector to avoid code duplication.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant.
@@ -213,9 +227,7 @@ class TimelineAnalyzer:
         Returns:
             Dictionary with statistics about potential savings
         """
-        # Create a gap detector with our clips
-        gap_detector = GapDetector(self._get_clips_by_source())
-        return gap_detector.calculate_gap_savings(min_gap_duration)
+        return self._get_gap_detector().calculate_gap_savings(min_gap_duration)
 
     def get_consolidated_ranges(self, source_file: str,
                                 start_handles: int = 0,
@@ -232,9 +244,8 @@ class TimelineAnalyzer:
         Returns:
             List of TransferSegment objects with consolidated source ranges
         """
-        # If end_handles is not specified, use the same value as start_handles
-        if end_handles is None:
-            end_handles = start_handles
+        # Normalize handle values
+        start_handles, end_handles = normalize_handles(start_handles, end_handles)
 
         # Get the source clip
         source_clip = self.source_clips.get(source_file)
@@ -261,10 +272,6 @@ class TimelineAnalyzer:
         if frame_rate is None:
             frame_rate = 24
 
-        # Convert handles to time units
-        start_handle_time = otio.opentime.RationalTime(start_handles, frame_rate)
-        end_handle_time = otio.opentime.RationalTime(end_handles, frame_rate)
-
         # Sort clips by source start time
         sorted_clips = sorted(
             [c for c in timeline_clips if c.source_start],
@@ -276,22 +283,22 @@ class TimelineAnalyzer:
 
         if sorted_clips:
             # Start with the first clip
-            current_start = sorted_clips[0].source_start - start_handle_time
-            current_end = sorted_clips[0].source_end + end_handle_time
+            current_start, current_end = apply_handles_to_range(
+                sorted_clips[0].source_start,
+                sorted_clips[0].source_end,
+                start_handles,
+                end_handles
+            )
             current_clips = [sorted_clips[0]]
-
-            # Ensure start time is not negative
-            if current_start.value < 0:
-                current_start = otio.opentime.RationalTime(0, current_start.rate)
 
             # Process remaining clips
             for clip in sorted_clips[1:]:
-                clip_start = clip.source_start - start_handle_time
-                clip_end = clip.source_end + end_handle_time
-
-                # Ensure clip_start is not negative
-                if clip_start.value < 0:
-                    clip_start = otio.opentime.RationalTime(0, clip_start.rate)
+                clip_start, clip_end = apply_handles_to_range(
+                    clip.source_start,
+                    clip.source_end,
+                    start_handles,
+                    end_handles
+                )
 
                 # If this clip overlaps with the current segment, extend it
                 if clip_start <= current_end:
@@ -343,6 +350,9 @@ class TimelineAnalyzer:
         Returns:
             List of TransferSegment objects with consolidated source ranges for all sources
         """
+        # Normalize handle values once
+        start_handles, end_handles = normalize_handles(start_handles, end_handles)
+
         all_consolidated = []
 
         for source_path in self.source_clips:
@@ -378,16 +388,13 @@ class TimelineAnalyzer:
         if min_gap_duration == 0:
             return self.get_consolidated_ranges(source_file, start_handles, end_handles)
 
-        # Create a gap detector with our clips
-        gap_detector = GapDetector(self._get_clips_by_source())
-        return gap_detector.optimize_segments(source_file, min_gap_duration, start_handles, end_handles)
+        # Delegate to gap detector to avoid code duplication
+        return self._get_gap_detector().optimize_segments(source_file, min_gap_duration, start_handles, end_handles)
 
     def optimize_all_segments(self, min_gap_duration: float,
                               start_handles: int = 0, end_handles: Optional[int] = None) -> List[TransferSegment]:
         """
         Create optimized segments for all source files.
-
-        Uses GapDetector to avoid code duplication.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant
@@ -398,9 +405,8 @@ class TimelineAnalyzer:
         Returns:
             List of TransferSegment objects with optimized source ranges for all sources
         """
-        # Create a gap detector with our clips
-        gap_detector = GapDetector(self._get_clips_by_source())
-        return gap_detector.optimize_all_segments(min_gap_duration, start_handles, end_handles)
+        # Delegate to gap detector to avoid code duplication
+        return self._get_gap_detector().optimize_all_segments(min_gap_duration, start_handles, end_handles)
 
     def get_timeline_statistics(self) -> Dict[str, Any]:
         """
@@ -460,11 +466,8 @@ class TimelineAnalyzer:
         Returns:
             TransferPlan object with all optimized segments
         """
-        # Validate end_handles
-        if end_handles is not None and not isinstance(end_handles, int):
-            logger.warning(f"end_handles should be an integer, got {type(end_handles)}. "
-                           f"Using start_handles value ({start_handles}).")
-            end_handles = start_handles
+        # Normalize handle values
+        start_handles, end_handles = normalize_handles(start_handles, end_handles)
 
         # Create a new transfer plan
         plan_name = f"TransferPlan_{len(self.timelines)}_timelines"
