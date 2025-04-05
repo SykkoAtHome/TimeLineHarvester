@@ -15,7 +15,7 @@ import opentimelineio as otio
 
 from .gap_detector import GapDetector
 from ..models import TimelineClip, Timeline, TransferSegment, TransferPlan
-from ..timeline_io import read_timeline
+
 
 # Configure logging
 logger = logging.getLogger(__name__)

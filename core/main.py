@@ -12,8 +12,8 @@ from typing import Dict, List, Optional, Any
 
 import opentimelineio as otio
 
-from core.analyzer import TimelineAnalyzer
-from core.models import Timeline, TransferPlan, TransferSegment
+from .analyzer import TimelineAnalyzer
+from .models import Timeline, TransferPlan, TransferSegment
 
 # Configure logging
 logger = logging.getLogger(__name__)
