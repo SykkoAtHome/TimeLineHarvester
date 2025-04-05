@@ -9,6 +9,7 @@ This version works with the model-based Timeline and Clip classes.
 """
 
 import logging
+import os
 from typing import Dict, List, Optional, Tuple, Any, Union
 
 import opentimelineio as otio
@@ -89,6 +90,10 @@ class GapDetector:
             [c for c in clips if c.source_start],
             key=lambda c: c.source_start.value
         )
+
+        if not sorted_clips:
+            logger.warning(f"No clips with source timing for: {source_file}")
+            return []
 
         # Find gaps between clips
         gaps = []
@@ -245,13 +250,13 @@ class GapDetector:
             if range_start.value < 0:
                 range_start = otio.opentime.RationalTime(0, range_start.rate)
 
-            segment_name = f"{source_file.split('/')[-1].split('\\')[-1]}_consolidated"
+            segment_name = f"{os.path.basename(source_file)}_consolidated"
             segment = TransferSegment(
                 name=segment_name,
                 source_file=source_file,
                 source_start=range_start,
                 source_end=range_end,
-                timeline_clips=sorted_clips
+                timeline_clips=sorted_clips  # No need to copy, we're not modifying the list
             )
 
             return [segment]
@@ -292,16 +297,16 @@ class GapDetector:
                     if range_start.value < 0:
                         range_start = otio.opentime.RationalTime(0, range_start.rate)
 
-                    segment_name = f"{source_file.split('/')[-1].split('\\')[-1]}_opt_{len(optimized_segments) + 1}"
+                    segment_name = f"{os.path.basename(source_file)}_opt_{len(optimized_segments) + 1}"
                     segment = TransferSegment(
                         name=segment_name,
                         source_file=source_file,
                         source_start=range_start,
                         source_end=range_end,
-                        timeline_clips=current_group.copy()
+                        timeline_clips=current_group  # Pass the current group directly
                     )
                     optimized_segments.append(segment)
-                    current_group = []
+                    current_group = []  # Reset for next group
 
         logger.info(f"Created {len(optimized_segments)} optimized segments for {source_file} "
                     f"based on {len(gaps)} significant gaps")
