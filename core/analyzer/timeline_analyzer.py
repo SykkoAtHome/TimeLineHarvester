@@ -8,14 +8,14 @@ better object-oriented design and cleaner code.
 
 import logging
 import os
-from typing import Dict, List, Set, Optional, Tuple, Any, Union
 from collections import defaultdict
+from typing import Dict, List, Optional, Any, Union
 
 import opentimelineio as otio
 
-from ..timeline_io import read_timeline
-from ..models import SourceClip, TimelineClip, Timeline, TransferSegment, TransferPlan
 from .gap_detector import GapDetector
+from ..models import TimelineClip, Timeline, TransferSegment, TransferPlan
+from ..timeline_io import read_timeline
 
 # Configure logging
 logger = logging.getLogger(__name__)

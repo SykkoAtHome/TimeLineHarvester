@@ -10,11 +10,11 @@ This version works with the model-based Timeline and Clip classes.
 
 import logging
 import os
-from typing import Dict, List, Optional, Tuple, Any, Union
+from typing import Dict, List, Optional, Any, Union
 
 import opentimelineio as otio
 
-from ..models import SourceClip, TimelineClip, Timeline, TransferSegment
+from ..models import TimelineClip, Timeline, TransferSegment
 
 # Configure logging
 logger = logging.getLogger(__name__)
