@@ -139,13 +139,16 @@ class TimelineAnalyzer:
         return dict(self.source_usage)
 
     def get_consolidated_ranges(self, source_file: str,
-                                handles: int = 0) -> List[Dict[str, Any]]:
+                                start_handles: int = 0,
+                                end_handles: int = None) -> List[Dict[str, Any]]:
         """
         Get consolidated time ranges for a source file, merging overlapping segments.
 
         Args:
             source_file: Path to the source file
-            handles: Number of frames to add before and after each range as "handles"
+            start_handles: Number of frames to add before each range as "handles"
+            end_handles: Number of frames to add after each range as "handles"
+                        If None, will use the same value as start_handles
 
         Returns:
             List of dictionaries with consolidated source ranges
@@ -156,20 +159,28 @@ class TimelineAnalyzer:
             logger.warning(f"No usage found for source: {source_file}")
             return []
 
+        # If end_handles is not specified, use the same value as start_handles
+        if end_handles is None:
+            end_handles = start_handles
+
         # Convert handles to the appropriate time units
         # We'll assume the first segment's time base is representative
-        if segments and handles > 0:
+        if segments:
             first_segment = segments[0]
             if (first_segment['source_start'] and
                     hasattr(first_segment['source_start'], 'rate')):
-                handle_time = otio.opentime.RationalTime(handles,
-                                                         first_segment['source_start'].rate)
+                frame_rate = first_segment['source_start'].rate
             else:
                 # Default to 24fps if we can't determine the rate
-                handle_time = otio.opentime.RationalTime(handles, 24)
+                frame_rate = 24
+
+            # Convert handles to time units
+            start_handle_time = otio.opentime.RationalTime(start_handles, frame_rate)
+            end_handle_time = otio.opentime.RationalTime(end_handles, frame_rate)
         else:
-            # Zero handles as default
-            handle_time = otio.opentime.RationalTime(0, 24)
+            # Zero handles as default with 24fps
+            start_handle_time = otio.opentime.RationalTime(0, 24)
+            end_handle_time = otio.opentime.RationalTime(0, 24)
 
         # Sort segments by start time
         sorted_segments = sorted(segments,
@@ -182,8 +193,8 @@ class TimelineAnalyzer:
             current_range = {
                 'name': f"{os.path.basename(source_file)}_consolidated_1",
                 'source_file': source_file,
-                'source_start': sorted_segments[0]['source_start'] - handle_time,
-                'source_end': sorted_segments[0]['source_end'] + handle_time,
+                'source_start': sorted_segments[0]['source_start'] - start_handle_time,
+                'source_end': sorted_segments[0]['source_end'] + end_handle_time,
                 'original_segments': [sorted_segments[0]]
             }
 
@@ -193,8 +204,8 @@ class TimelineAnalyzer:
 
             # Process remaining segments
             for segment in sorted_segments[1:]:
-                segment_start = segment['source_start'] - handle_time
-                segment_end = segment['source_end'] + handle_time
+                segment_start = segment['source_start'] - start_handle_time
+                segment_end = segment['source_end'] + end_handle_time
 
                 # Ensure segment_start is not negative
                 if segment_start.value < 0:
@@ -222,12 +233,15 @@ class TimelineAnalyzer:
         logger.info(f"Consolidated {len(segments)} segments into {len(consolidated)} ranges for {source_file}")
         return consolidated
 
-    def get_all_consolidated_ranges(self, handles: int = 0) -> List[Dict[str, Any]]:
+    def get_all_consolidated_ranges(self, start_handles: int = 0,
+                                    end_handles: int = None) -> List[Dict[str, Any]]:
         """
         Get consolidated time ranges for all source files.
 
         Args:
-            handles: Number of frames to add before and after each range as "handles"
+            start_handles: Number of frames to add before each range as "handles"
+            end_handles: Number of frames to add after each range as "handles"
+                        If None, will use the same value as start_handles
 
         Returns:
             List of dictionaries with consolidated source ranges for all sources
@@ -235,7 +249,7 @@ class TimelineAnalyzer:
         all_consolidated = []
 
         for source_file in self.source_usage:
-            consolidated = self.get_consolidated_ranges(source_file, handles)
+            consolidated = self.get_consolidated_ranges(source_file, start_handles, end_handles)
             all_consolidated.extend(consolidated)
 
         return all_consolidated
@@ -355,18 +369,24 @@ class TimelineAnalyzer:
         }
 
     def optimize_segments(self, source_file: str, min_gap_duration: float,
-                          handles: int = 0) -> List[Dict[str, Any]]:
+                          start_handles: int = 0, end_handles: int = None) -> List[Dict[str, Any]]:
         """
         Create optimized segments for a source file by splitting at significant gaps.
 
         Args:
             source_file: Path to the source file
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant
-            handles: Number of frames to add before and after each range as "handles"
+            start_handles: Number of frames to add before each range as "handles"
+            end_handles: Number of frames to add after each range as "handles"
+                        If None, will use the same value as start_handles
 
         Returns:
             List of dictionaries with optimized source ranges
         """
+        # If end_handles is not specified, use the same value as start_handles
+        if end_handles is None:
+            end_handles = start_handles
+
         # Get all segments for this source
         segments = self.source_usage.get(source_file, [])
         if not segments:
@@ -383,25 +403,29 @@ class TimelineAnalyzer:
                                      key=lambda x: x['source_start'].value if x['source_start'] else float('inf'))
 
             # Convert handles to the appropriate time units
-            if handles > 0 and sorted_segments:
+            if sorted_segments:
                 first_segment = sorted_segments[0]
                 if (first_segment['source_start'] and
                         hasattr(first_segment['source_start'], 'rate')):
-                    handle_time = otio.opentime.RationalTime(handles,
-                                                             first_segment['source_start'].rate)
+                    frame_rate = first_segment['source_start'].rate
                 else:
                     # Default to 24fps if we can't determine the rate
-                    handle_time = otio.opentime.RationalTime(handles, 24)
+                    frame_rate = 24
+
+                # Convert handles to time units
+                start_handle_time = otio.opentime.RationalTime(start_handles, frame_rate)
+                end_handle_time = otio.opentime.RationalTime(end_handles, frame_rate)
             else:
-                # Zero handles as default
-                handle_time = otio.opentime.RationalTime(0, 24)
+                # Zero handles as default with 24fps
+                start_handle_time = otio.opentime.RationalTime(0, 24)
+                end_handle_time = otio.opentime.RationalTime(0, 24)
 
             # Create a single range covering all segments
             consolidated = [{
-                'name': f"{os.path.basename(source_file)}_consolidated",
+                'name': f"{source_file.split('/')[-1].split('\\')[-1]}_consolidated",
                 'source_file': source_file,
-                'source_start': sorted_segments[0]['source_start'] - handle_time,
-                'source_end': sorted_segments[-1]['source_end'] + handle_time,
+                'source_start': sorted_segments[0]['source_start'] - start_handle_time,
+                'source_end': sorted_segments[-1]['source_end'] + end_handle_time,
                 'original_segments': sorted_segments.copy()
             }]
 
@@ -418,18 +442,22 @@ class TimelineAnalyzer:
                              key=lambda x: x['gap_start'].value if x['gap_start'] else float('inf'))
 
         # Convert handles to the appropriate time units
-        if handles > 0 and sorted_segments:
+        if sorted_segments:
             first_segment = sorted_segments[0]
             if (first_segment['source_start'] and
                     hasattr(first_segment['source_start'], 'rate')):
-                handle_time = otio.opentime.RationalTime(handles,
-                                                         first_segment['source_start'].rate)
+                frame_rate = first_segment['source_start'].rate
             else:
                 # Default to 24fps if we can't determine the rate
-                handle_time = otio.opentime.RationalTime(handles, 24)
+                frame_rate = 24
+
+            # Convert handles to time units
+            start_handle_time = otio.opentime.RationalTime(start_handles, frame_rate)
+            end_handle_time = otio.opentime.RationalTime(end_handles, frame_rate)
         else:
-            # Zero handles as default
-            handle_time = otio.opentime.RationalTime(0, 24)
+            # Zero handles as default with 24fps
+            start_handle_time = otio.opentime.RationalTime(0, 24)
+            end_handle_time = otio.opentime.RationalTime(0, 24)
 
         # Group segments separated by significant gaps
         optimized_ranges = []
@@ -457,8 +485,8 @@ class TimelineAnalyzer:
             # If we've reached a boundary, create a consolidated range
             if is_last_segment or is_before_gap:
                 if current_group:
-                    range_start = current_group[0]['source_start'] - handle_time
-                    range_end = current_group[-1]['source_end'] + handle_time
+                    range_start = current_group[0]['source_start'] - start_handle_time
+                    range_end = current_group[-1]['source_end'] + end_handle_time
 
                     # Ensure range_start is not negative
                     if range_start.value < 0:
@@ -479,13 +507,15 @@ class TimelineAnalyzer:
         return optimized_ranges
 
     def optimize_all_segments(self, min_gap_duration: float,
-                              handles: int = 0) -> List[Dict[str, Any]]:
+                              start_handles: int = 0, end_handles: int = None) -> List[Dict[str, Any]]:
         """
         Create optimized segments for all source files.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant
-            handles: Number of frames to add before and after each range as "handles"
+            start_handles: Number of frames to add before each range as "handles"
+            end_handles: Number of frames to add after each range as "handles"
+                        If None, will use the same value as start_handles
 
         Returns:
             List of dictionaries with optimized source ranges for all sources
@@ -493,7 +523,7 @@ class TimelineAnalyzer:
         all_optimized = []
 
         for source_file in self.source_usage:
-            optimized = self.optimize_segments(source_file, min_gap_duration, handles)
+            optimized = self.optimize_segments(source_file, min_gap_duration, start_handles, end_handles)
             all_optimized.extend(optimized)
 
         return all_optimized
@@ -543,19 +573,21 @@ class TimelineAnalyzer:
         return stats
 
     def create_transfer_plan(self, min_gap_duration: float = 0,
-                             handles: int = 0) -> Dict[str, Any]:
+                             start_handles: int = 0, end_handles: int = None) -> Dict[str, Any]:
         """
         Create a comprehensive transfer plan based on all analyzed timelines.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant
-            handles: Number of frames to add before and after each range as "handles"
+            start_handles: Number of frames to add before each range as "handles"
+            end_handles: Number of frames to add after each range as "handles"
+                        If None, will use the same value as start_handles
 
         Returns:
             Dictionary with transfer plan information
         """
         # Get optimized segments
-        optimized_segments = self.optimize_all_segments(min_gap_duration, handles)
+        optimized_segments = self.optimize_all_segments(min_gap_duration, start_handles, end_handles)
 
         # Generate statistics
         stats = self.get_timeline_statistics()
@@ -589,7 +621,8 @@ class TimelineAnalyzer:
             'segment_count': len(optimized_segments),
             'original_duration': original_duration,
             'optimized_duration': optimized_duration,
-            'handles': handles,
+            'start_handles': start_handles,
+            'end_handles': end_handles if end_handles is not None else start_handles,
             'min_gap_duration': min_gap_duration,
             'statistics': stats
         }
