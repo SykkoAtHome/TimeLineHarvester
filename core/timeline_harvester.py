@@ -2,18 +2,19 @@
 TimelineHarvester Module
 
 This module provides the main facade for the TimelineHarvester application.
-It encapsulates the complexity of reading timeline files, analyzing them,
-creating optimized transfer plans, and exporting results.
+It integrates the file management, timeline analysis, and optimized transfer
+capabilities into a clean, unified interface.
 """
 
-import logging
 import os
-from typing import Dict, List, Optional, Any
+import logging
+from typing import Dict, List, Optional, Union, Any
 
 import opentimelineio as otio
 
-from .analyzer import TimelineAnalyzer
 from .models import Timeline, TransferPlan, TransferSegment
+from .analyzer import TimelineAnalyzer
+from .file_manager import FileManager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -23,82 +24,93 @@ class TimelineHarvester:
     """
     Main facade for the TimelineHarvester application.
 
-    This class provides a simple interface for the main features of the application:
-    - Reading timeline files (EDL, AAF, XML)
-    - Analyzing timelines to identify source media usage
-    - Creating optimized transfer plans
-    - Exporting results to various formats
+    This class provides a simplified interface to the core functionality:
+    - Loading and managing timeline files
+    - Analyzing source media usage
+    - Optimizing media transfers
+    - Exporting results
     """
 
     def __init__(self):
         """Initialize a new TimelineHarvester instance."""
         self.analyzer = TimelineAnalyzer()
-        self.transfer_plan = None
+        self.current_plan = None
 
-    def add_timeline(self, file_path: str, fps: Optional[float] = None) -> Timeline:
+    def load_timeline(self, file_path: str, fps: Optional[float] = None) -> Timeline:
         """
-        Add a timeline file to the analysis.
+        Load a timeline file for analysis.
 
         Args:
-            file_path: Path to the timeline file (EDL, AAF, XML)
-            fps: Frames per second to use if not specified in the file
+            file_path: Path to a timeline file (EDL, AAF, XML)
+            fps: Optional frames per second to use if not specified in the file
 
         Returns:
-            Timeline object created from the file
+            The loaded Timeline object
         """
-        logger.info(f"Adding timeline from file: {file_path}")
+        logger.info(f"Loading timeline from: {file_path}")
 
         if not os.path.exists(file_path):
-            logger.error(f"Timeline file not found: {file_path}")
             raise FileNotFoundError(f"Timeline file not found: {file_path}")
 
-        # Add timeline to analyzer
+        # Add the timeline to our analyzer
         timeline = self.analyzer.add_timeline(file_path, fps)
-        logger.info(f"Added timeline: {timeline.name} with {len(timeline.clips)} clips")
+        logger.info(f"Loaded timeline '{timeline.name}' with {len(timeline.clips)} clips")
 
         return timeline
 
-    def add_multiple_timelines(self, file_paths: List[str], fps: Optional[float] = None) -> List[Timeline]:
+    def load_multiple_timelines(self, file_paths: List[str], fps: Optional[float] = None) -> List[Timeline]:
         """
-        Add multiple timeline files to the analysis.
+        Load multiple timeline files for analysis.
 
         Args:
             file_paths: List of paths to timeline files
-            fps: Frames per second to use if not specified in the files
+            fps: Optional frames per second to use if not specified in the files
 
         Returns:
-            List of Timeline objects created from the files
+            List of loaded Timeline objects
         """
-        logger.info(f"Adding {len(file_paths)} timeline files")
-        return [self.add_timeline(path, fps) for path in file_paths]
+        logger.info(f"Loading {len(file_paths)} timeline files")
+        return [self.load_timeline(path, fps) for path in file_paths]
 
-    def get_source_usage(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_source_files(self) -> List[str]:
         """
-        Get detailed information about source file usage across all timelines.
+        Get a list of all unique source files used in the loaded timelines.
 
         Returns:
-            Dictionary mapping source files to their usage details
+            List of source file paths
         """
-        logger.info("Retrieving source usage information")
-        return self.analyzer.get_source_usage()
+        return self.analyzer.get_unique_sources()
+
+    def get_source_usage(self, source_file: Optional[str] = None) -> Dict:
+        """
+        Get detailed usage information for source files.
+
+        Args:
+            source_file: Optional specific source file to get info for.
+                         If None, returns info for all sources.
+
+        Returns:
+            Dictionary with source file usage details
+        """
+        return self.analyzer.get_source_usage(source_file)
 
     def find_gaps(self, min_gap_duration: Optional[float] = None) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Find gaps (unused regions) in source files across all timelines.
+        Find gaps (unused regions) in source files.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant.
                              If None, all gaps are reported.
 
         Returns:
-            Dictionary mapping source files to lists of gaps
+            Dictionary mapping source files to lists of gap information
         """
-        logger.info(f"Finding gaps with min duration: {min_gap_duration or 'None'}")
+        logger.info(f"Finding gaps with min duration: {min_gap_duration}")
         return self.analyzer.find_all_gaps(min_gap_duration)
 
-    def calculate_gap_savings(self, min_gap_duration: Optional[float] = None) -> Dict[str, Any]:
+    def calculate_potential_savings(self, min_gap_duration: Optional[float] = None) -> Dict[str, Any]:
         """
-        Calculate potential savings from skipping gaps in source files.
+        Calculate potential savings from skipping unused regions in source files.
 
         Args:
             min_gap_duration: Minimum duration (in seconds) to consider a gap significant.
@@ -106,200 +118,148 @@ class TimelineHarvester:
         Returns:
             Dictionary with statistics about potential savings
         """
-        logger.info(f"Calculating gap savings with min duration: {min_gap_duration or 'None'}")
+        logger.info(f"Calculating potential savings with min gap duration: {min_gap_duration}")
         return self.analyzer.calculate_gap_savings(min_gap_duration)
 
     def create_transfer_plan(self,
                              min_gap_duration: float = 0.0,
                              start_handles: int = 0,
-                             end_handles: Optional[int] = None) -> TransferPlan:
+                             end_handles: Optional[int] = None,
+                             name: Optional[str] = None) -> TransferPlan:
         """
-        Create a transfer plan based on all analyzed timelines.
+        Create an optimized transfer plan.
 
         Args:
-            min_gap_duration: Minimum duration (in seconds) to consider a gap significant
-            start_handles: Number of frames to add before each range as "handles"
-            end_handles: Number of frames to add after each range as "handles"
-                        If None, will use the same value as start_handles
+            min_gap_duration: Minimum duration (in seconds) to split at
+            start_handles: Number of frames to add before each segment
+            end_handles: Number of frames to add after each segment
+            name: Optional name for the transfer plan
 
         Returns:
-            TransferPlan object with optimized segments
+            The created TransferPlan object
         """
         logger.info(f"Creating transfer plan with min_gap_duration={min_gap_duration}, "
                     f"handles={start_handles}/{end_handles or start_handles}")
 
-        self.transfer_plan = self.analyzer.create_transfer_plan(
+        # Create the transfer plan
+        self.current_plan = self.analyzer.create_transfer_plan(
             min_gap_duration=min_gap_duration,
             start_handles=start_handles,
             end_handles=end_handles
         )
 
-        # Log some information about the created plan
-        stats = self.transfer_plan.statistics
-        logger.info(f"Created transfer plan with {stats.get('segment_count', 0)} segments "
-                    f"for {stats.get('unique_sources', 0)} unique sources")
+        # Set custom name if provided
+        if name:
+            self.current_plan.name = name
 
-        return self.transfer_plan
+        # Log information about the plan
+        stats = self.current_plan.statistics
+        logger.info(f"Created transfer plan '{self.current_plan.name}' with "
+                    f"{stats.get('segment_count', 0)} segments for "
+                    f"{stats.get('unique_sources', 0)} source files")
+
+        return self.current_plan
 
     def export_transfer_plan(self, output_path: str, format_name: Optional[str] = None) -> str:
         """
-        Export the current transfer plan as a consolidated timeline file.
+        Export the current transfer plan as a timeline file.
 
         Args:
-            output_path: Path where the output file should be written
-            format_name: Format to use for the output file (e.g., 'edl', 'xml')
-                        If None, format will be detected from the file extension
+            output_path: Path where to write the output file
+            format_name: Format to use (e.g., 'edl', 'xml')
 
         Returns:
-            Path to the written file
+            Path to the exported file
 
         Raises:
-            ValueError: If no transfer plan has been created yet
+            ValueError: If no transfer plan has been created
         """
-        if not self.transfer_plan:
-            logger.error("No transfer plan has been created yet")
-            raise ValueError("No transfer plan has been created yet. Call create_transfer_plan() first.")
+        if not self.current_plan:
+            raise ValueError("No transfer plan has been created. Call create_transfer_plan() first.")
 
         logger.info(f"Exporting transfer plan to: {output_path}")
+        return FileManager.write_transfer_plan(self.current_plan, output_path, format_name)
 
-        # Get the consolidated timeline from the transfer plan
-        consolidated_timeline = self.transfer_plan.get_consolidated_timeline()
-
-        # Write the timeline to the output file
-        write_timeline(consolidated_timeline, output_path, format_name)
-
-        logger.info(f"Transfer plan exported to: {output_path}")
-        return output_path
-
-    def export_segment(self, segment: TransferSegment, output_path: str,
-                       format_name: Optional[str] = None) -> str:
+    def export_segments(self, output_dir: str,
+                        format_name: Optional[str] = None,
+                        filename_pattern: str = "{name}.{ext}") -> List[str]:
         """
-        Export a single transfer segment as a timeline file.
+        Export each segment in the current transfer plan as a separate file.
 
         Args:
-            segment: TransferSegment to export
-            output_path: Path where the output file should be written
-            format_name: Format to use for the output file
-
-        Returns:
-            Path to the written file
-        """
-        logger.info(f"Exporting segment '{segment.name}' to: {output_path}")
-
-        # Create a timeline with just this segment
-        timeline = otio.schema.Timeline(name=segment.name)
-        video_track = otio.schema.Track(name="Video", kind="Video")
-        timeline.tracks.append(video_track)
-        video_track.append(segment.get_otio_clip())
-
-        # Write the timeline to the output file
-        write_timeline(timeline, output_path, format_name)
-
-        logger.info(f"Segment exported to: {output_path}")
-        return output_path
-
-    def export_segments_batch(self, output_dir: str,
-                              format_name: Optional[str] = None,
-                              filename_pattern: str = "{segment_name}.{ext}") -> List[str]:
-        """
-        Export all segments in the current transfer plan as individual files.
-
-        Args:
-            output_dir: Directory where the output files should be written
+            output_dir: Directory where to write the output files
             format_name: Format to use for the output files
             filename_pattern: Pattern for generating filenames
 
         Returns:
-            List of paths to the written files
+            List of paths to the exported files
 
         Raises:
-            ValueError: If no transfer plan has been created yet
+            ValueError: If no transfer plan has been created
         """
-        if not self.transfer_plan:
-            logger.error("No transfer plan has been created yet")
-            raise ValueError("No transfer plan has been created yet. Call create_transfer_plan() first.")
+        if not self.current_plan:
+            raise ValueError("No transfer plan has been created. Call create_transfer_plan() first.")
 
-        # Ensure output directory exists
-        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Exporting segments to directory: {output_dir}")
+        return FileManager.write_segments_batch(
+            self.current_plan.segments,
+            output_dir,
+            format_name,
+            filename_pattern
+        )
 
-        # Determine default extension based on format
-        ext = format_name or "edl"
-
-        # Export each segment
-        exported_files = []
-        for segment in self.transfer_plan.segments:
-            # Generate filename
-            filename = filename_pattern.format(
-                segment_name=segment.name,
-                source_name=os.path.basename(segment.source_file),
-                ext=ext
-            )
-            output_path = os.path.join(output_dir, filename)
-
-            # Export segment
-            self.export_segment(segment, output_path, format_name)
-            exported_files.append(output_path)
-
-        logger.info(f"Exported {len(exported_files)} segments to {output_dir}")
-        return exported_files
-
-    def export_report(self, output_path: str) -> str:
+    def generate_report(self, output_path: str) -> str:
         """
-        Export a detailed report about the transfer plan.
+        Generate a detailed report about the current transfer plan.
 
         Args:
-            output_path: Path where the report should be written
+            output_path: Path where to write the report
 
         Returns:
-            Path to the written report
+            Path to the generated report
 
         Raises:
-            ValueError: If no transfer plan has been created yet
+            ValueError: If no transfer plan has been created
         """
-        if not self.transfer_plan:
-            logger.error("No transfer plan has been created yet")
-            raise ValueError("No transfer plan has been created yet. Call create_transfer_plan() first.")
+        if not self.current_plan:
+            raise ValueError("No transfer plan has been created. Call create_transfer_plan() first.")
 
-        logger.info(f"Exporting transfer plan report to: {output_path}")
+        logger.info(f"Generating report to: {output_path}")
 
-        # Calculate statistics and savings
-        stats = self.transfer_plan.statistics
-        savings = self.transfer_plan.estimate_savings()
+        # Get statistics and savings information
+        stats = self.current_plan.statistics
+        savings = self.current_plan.estimate_savings()
 
-        # Write the report
+        # Create the report
         with open(output_path, 'w') as f:
-            f.write("# TimelineHarvester Transfer Plan Report\n\n")
+            f.write(f"# TimelineHarvester Transfer Plan: {self.current_plan.name}\n\n")
 
-            # Plan overview
-            f.write("## Plan Overview\n")
-            f.write(f"- Plan Name: {self.transfer_plan.name}\n")
-            f.write(f"- Timelines: {stats.get('timeline_count', 0)}\n")
-            f.write(f"- Unique Sources: {stats.get('unique_sources', 0)}\n")
-            f.write(f"- Total Segments: {stats.get('segment_count', 0)}\n")
-            f.write(f"- Min Gap Duration: {self.transfer_plan.min_gap_duration} seconds\n")
-            f.write(f"- Handles: {self.transfer_plan.start_handles}/{self.transfer_plan.end_handles} frames\n\n")
+            f.write("## Overview\n")
+            f.write(f"- Timelines analyzed: {stats.get('timeline_count', 0)}\n")
+            f.write(f"- Unique source files: {stats.get('unique_sources', 0)}\n")
+            f.write(f"- Total segments: {stats.get('segment_count', 0)}\n")
+            f.write(f"- Minimum gap duration: {self.current_plan.min_gap_duration} seconds\n")
+            f.write(f"- Handles: {self.current_plan.start_handles}/{self.current_plan.end_handles} frames\n\n")
 
-            # Savings
             f.write("## Estimated Savings\n")
             if 'savings_percentage' in savings:
-                f.write(f"- Savings: {savings['savings_percentage']:.2f}%\n")
+                f.write(f"- Overall savings: {savings['savings_percentage']:.2f}%\n")
             if 'original_duration' in savings and 'optimized_duration' in savings:
                 orig_sec = savings['original_duration'].value / savings['original_duration'].rate
                 opt_sec = savings['optimized_duration'].value / savings['optimized_duration'].rate
-                f.write(f"- Original Duration: {orig_sec:.2f} seconds\n")
-                f.write(f"- Optimized Duration: {opt_sec:.2f} seconds\n")
-                f.write(f"- Reduction: {orig_sec - opt_sec:.2f} seconds\n\n")
+                f.write(f"- Original duration: {orig_sec:.2f} seconds\n")
+                f.write(f"- Optimized duration: {opt_sec:.2f} seconds\n")
+                f.write(f"- Total reduction: {orig_sec - opt_sec:.2f} seconds\n\n")
 
-            # Segments
-            f.write("## Segments\n")
-            for i, segment in enumerate(self.transfer_plan.segments):
+            f.write("## Segments Details\n")
+            for i, segment in enumerate(self.current_plan.segments):
                 duration_sec = segment.duration.value / segment.duration.rate
-                f.write(f"### Segment {i + 1}: {segment.name}\n")
-                f.write(f"- Source: {segment.source_file}\n")
+                f.write(f"### {i + 1}. {segment.name}\n")
+                f.write(f"- Source file: {segment.source_file}\n")
                 f.write(f"- Duration: {duration_sec:.2f} seconds\n")
-                f.write(f"- Clips: {len(segment.timeline_clips)}\n\n")
+                f.write(f"- Number of clips covered: {len(segment.timeline_clips)}\n\n")
 
-        logger.info(f"Transfer plan report exported to: {output_path}")
+        logger.info(f"Report generated at: {output_path}")
         return output_path
 
     def get_statistics(self) -> Dict[str, Any]:
@@ -309,5 +269,4 @@ class TimelineHarvester:
         Returns:
             Dictionary with various statistics
         """
-        logger.info("Retrieving statistics")
         return self.analyzer.get_timeline_statistics()

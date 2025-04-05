@@ -1,5 +1,5 @@
 """
-Models Module
+TimelineHarvester Models Module
 
 This module contains class definitions for representing timeline entities, source clips,
 and transfer plans. These models provide a clean interface for the rest of the application

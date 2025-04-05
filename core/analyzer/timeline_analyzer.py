@@ -8,14 +8,14 @@ better object-oriented design and cleaner code.
 
 import logging
 import os
+from typing import Dict, List, Set, Optional, Tuple, Any, Union
 from collections import defaultdict
-from typing import Dict, List, Optional, Any, Union
 
 import opentimelineio as otio
 
+from ..file_manager import FileManager
+from ..models import SourceClip, TimelineClip, Timeline, TransferSegment, TransferPlan
 from .gap_detector import GapDetector
-from ..models import TimelineClip, Timeline, TransferSegment, TransferPlan
-
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -55,10 +55,8 @@ class TimelineAnalyzer:
         """
         # Handle different input types
         if isinstance(timeline_or_path, str):
-            # Read OTIO timeline from file
-            otio_timeline = read_timeline(timeline_or_path, fps)
-            # Convert to our Timeline model
-            timeline = Timeline.from_otio_timeline(otio_timeline, self.source_clips)
+            # Read timeline from file
+            timeline = FileManager.read_timeline(timeline_or_path, fps, source_clips=self.source_clips)
             logger.info(f"Added timeline from file: {timeline_or_path}")
 
         elif isinstance(timeline_or_path, otio.schema.Timeline):
