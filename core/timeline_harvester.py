@@ -149,7 +149,7 @@ class TimelineHarvester:
     # --- Processing Steps ---
     def parse_added_edit_files(self) -> bool:
         """Parses all edit files in the list. Populates self.edit_shots."""
-        self.edit_shots = []  # Clear previous results
+        self.edit_shots = []
         successful_parses = 0
         total_shots_parsed = 0
         if not self.edit_files: logger.warning("No edit files added to parse."); return False
@@ -157,17 +157,30 @@ class TimelineHarvester:
         logger.info(f"Starting parsing for {len(self.edit_files)} edit file(s)...")
         for meta in self.edit_files:
             try:
-                shots, adapter_name = edit_parser.read_and_parse_edit_file(meta.path)
-                meta.format_type = adapter_name or "otio_unknown"
+                # Call the updated parser function (now returns only shots)
+                shots = edit_parser.read_and_parse_edit_file(meta.path)
+                # We don't get adapter name back directly anymore,
+                # could try to guess based on extension for metadata?
+                _, ext = os.path.splitext(meta.filename)
+                meta.format_type = ext.lower() or "unknown"  # Store extension as format type
                 self.edit_shots.extend(shots)
                 total_shots_parsed += len(shots)
                 successful_parses += 1
-            except Exception as e:
-                logger.error(f"Failed to parse edit file '{meta.filename}': {e}", exc_info=False)
-                meta.format_type = "parse_error"
+                logger.debug(f"Parsed {len(shots)} shots from '{meta.filename}'.")
+            except otio.exceptions.OTIOError as otio_err:  # Catch specific OTIO errors
+                logger.error(f"Failed to parse edit file '{meta.filename}' using OTIO: {otio_err}")
+                meta.format_type = "parse_error (OTIO)"
+            except FileNotFoundError as fnf_err:  # Catch file not found
+                logger.error(f"Edit file '{meta.filename}' not found during parsing: {fnf_err}")
+                meta.format_type = "file_not_found"
+            except Exception as e:  # Catch other unexpected errors
+                logger.error(f"Unexpected error parsing edit file '{meta.filename}': {e}", exc_info=False)
+                meta.format_type = "parse_error (Other)"
+
         logger.info(
-            f"Parsing complete. Parsed {successful_parses}/{len(self.edit_files)} files. Found {total_shots_parsed} EditShots.")
-        return successful_parses > 0
+            f"Parsing complete. Successfully parsed {successful_parses}/{len(self.edit_files)} files. Total EditShots found: {total_shots_parsed}.")
+        # Return True if at least one file was processed, even if some failed
+        return len(self.edit_files) > 0  # Indicate process ran
 
     def _get_source_finder(self) -> Optional[SourceFinder]:
         """Initializes or returns the SourceFinder for ORIGINAL sources."""

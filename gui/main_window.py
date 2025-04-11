@@ -312,9 +312,11 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.Save:
             return self.save_project()
         elif reply == QMessageBox.Discard:
-            logger.info("User discarded unsaved changes."); return True
+            logger.info("User discarded unsaved changes.");
+            return True
         else:
-            logger.info("User cancelled operation due to unsaved changes."); return False  # Cancel
+            logger.info("User cancelled operation due to unsaved changes.");
+            return False  # Cancel
 
     # --- Project Actions Implementation ---
     @pyqtSlot()
@@ -717,19 +719,28 @@ class MainWindow(QMainWindow):
 
     def _start_worker(self, task_name: str, busy_message: str, params: Dict):
         """Helper to create, connect signals, start, and manage worker thread."""
+        # Double-check it's not already busy, though the calling methods should also check
+        if self._is_worker_busy(): return
+
         logger.info(f"Starting worker task: {task_name} with params: {params}")
         self.status_manager.set_busy(True, busy_message)
-        self._set_actions_enabled(False)  # Disable UI during task
+        # Call the correct method to update UI state (which will disable elements because worker is running)
+        self._update_ui_state()  # Update UI to reflect busy state
 
+        # Create the worker thread instance
         self.worker_thread = WorkerThread(self.harvester, task_name, params)
-        # Connect signals FROM worker TO main window slots (self)
+
+        # Connect signals FROM this specific worker thread instance TO slots in MainWindow (self)
         self.worker_thread.analysis_finished.connect(self.on_analysis_complete)
         self.worker_thread.plan_finished.connect(self.on_plan_complete)
         self.worker_thread.transcode_finished.connect(self.on_transcode_complete)
         self.worker_thread.progress_update.connect(self.on_progress_update)
         self.worker_thread.error_occurred.connect(self.on_task_error)
-        self.worker_thread.finished.connect(self.on_task_finished)  # Generic finished signal
-        self.worker_thread.start()  # Execute the run() method
+        # Connect the built-in finished signal (emitted always) to our cleanup slot
+        self.worker_thread.finished.connect(self.on_task_finished)
+
+        # Start thread execution (calls the run() method in the background)
+        self.worker_thread.start()
 
     # --- Slots Handling Worker Thread Signals ---
     @pyqtSlot(list)
@@ -796,19 +807,35 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def on_task_finished(self):
-        """Called ALWAYS after worker finishes. Cleans up and re-enables UI."""
+        """
+        Slot connected to QThread.finished signal.
+        Called ALWAYS after the worker thread's run() method completes,
+        regardless of success or failure. Cleans up and re-enables UI.
+        """
         logger.info("Worker thread finished signal received.")
-        self.status_manager.hide_progress()
+        self.status_manager.hide_progress()  # Ensure progress bar is hidden
+
         # Set final status message *if* no specific error/completion msg was set by handler
+        # Get the current message *before* setting potentially to "Ready."
         current_status = self.status_manager.status_label.text()
-        final_prefixes = ["Error:", "Failed:", "Completed", "cancelled", "complete", "exported", "Analysis complete",
-                          "Plan calculated", "Project saved", "Project loaded"]
-        if not any(current_status.startswith(prefix) for prefix in final_prefixes):
+        # List of prefixes indicating a task ended with a specific status message
+        final_message_prefixes = [
+            "Error:", "Failed:", "Completed", "cancelled", "complete",
+            "exported", "Analysis complete", "Plan calculated", "Project saved",
+            "Project loaded", "Task '",  # Added for cancellation message
+        ]
+        # If the current message doesn't already indicate a final state, set to "Ready."
+        if not any(current_status.startswith(prefix) for prefix in final_message_prefixes):
             self.status_manager.set_status("Ready.")  # Default idle message
 
-        self._update_ui_state()  # Re-enable UI elements based on current app state
-        self.worker_thread = None  # Clear the reference
-        logger.info("Worker thread cleanup complete.")
+        # CRUCIAL: Re-enable UI elements based on the *current* application state
+        # Now that the worker is no longer busy
+        self._update_ui_state()
+
+        # Clear the reference to the finished thread object to allow garbage collection
+        # and indicate no worker is currently active
+        self.worker_thread = None
+        logger.info("Worker thread cleanup and UI state update complete.")
 
     # --- Placeholder Methods for Save/Export/Report ---
     def save_transfer_plan(self):  # Method remains but points to project save
