@@ -17,6 +17,7 @@ from .handle_utils import (
     normalize_handles,
     apply_handles_to_range
 )
+from .executable_finder import find_executable
 
 # Expose functions directly at the package level
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     'duration_to_seconds',
     'frames_to_rational_time',
     'normalize_handles',
-    'apply_handles_to_range'
+    'apply_handles_to_range',
+    'find_executable'
 ]

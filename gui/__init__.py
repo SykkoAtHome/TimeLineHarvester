@@ -1,21 +1,21 @@
 # gui/__init__.py
 """
 TimelineHarvester GUI Package
-
-Contains PyQt5 user interface components.
 """
-
-# Optionally expose key classes at the package level
 from .main_window import MainWindow
-from .file_panel import FilePanel
-from .settings_panel import SettingsPanel
-from .results_panel import ResultsPanel
+from .common.file_list_widget import FileListWidget
+from .project_panel import ProjectPanel
+from .color_prep_tab import ColorPrepTabWidget
+from .online_prep_tab import OnlinePrepTabWidget
+# results_display might be needed later
 from .status_bar import StatusBarManager
 
 __all__ = [
     'MainWindow',
-    'FilePanel',
-    'SettingsPanel',
-    'ResultsPanel',
-    'StatusBarManager'
+    'FileListWidget',
+    'ProjectPanel',
+    'ColorPrepTabWidget',
+    'OnlinePrepTabWidget',
+    'StatusBarManager',
+    # Add ProfileEditDialog if kept in settings_panel or moved to common
 ]
