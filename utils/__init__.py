@@ -1,13 +1,13 @@
+# utils/__init__.py
 """
-TimelineHarvester Utilities Module
+TimelineHarvester Utilities Package
 
-This package provides utility functions used across the TimelineHarvester application.
+Provides common helper functions for time manipulation, handles, etc.
 """
 
 from .time_utils import (
     ensure_rational_time,
     ensure_non_negative_time,
-    add_handle_to_time,
     rescale_time,
     duration_to_seconds,
     frames_to_rational_time
@@ -17,14 +17,16 @@ from .handle_utils import (
     normalize_handles,
     apply_handles_to_range
 )
+from .executable_finder import find_executable
 
+# Expose functions directly at the package level
 __all__ = [
     'ensure_rational_time',
     'ensure_non_negative_time',
-    'add_handle_to_time',
     'rescale_time',
     'duration_to_seconds',
     'frames_to_rational_time',
     'normalize_handles',
-    'apply_handles_to_range'
+    'apply_handles_to_range',
+    'find_executable'
 ]

@@ -1,25 +1,23 @@
+# gui/status_bar.py
 """
-Status Bar Module
+Status Bar Manager Module
 
-This module defines the StatusBarManager class, which manages the application status bar
-by providing methods for displaying status messages and progress information.
+Provides a class to manage messages and progress display
+on the application's QStatusBar.
 """
 
 import logging
 from typing import Optional
 
 from PyQt5.QtWidgets import QStatusBar, QProgressBar, QLabel
+from PyQt5.QtCore import QTimer, Qt # Import QTimer and Qt namespace
 
-# Configure logging
 logger = logging.getLogger(__name__)
-
 
 class StatusBarManager:
     """
-    Manager for the application status bar.
-
-    This class provides a simplified interface for displaying status messages
-    and progress information in the application status bar.
+    Manages the application's status bar, providing methods for displaying
+    status messages, temporary messages, and progress indication.
     """
 
     def __init__(self, status_bar: QStatusBar):
@@ -27,98 +25,109 @@ class StatusBarManager:
         Initialize the status bar manager.
 
         Args:
-            status_bar: QStatusBar to manage
+            status_bar: The QStatusBar instance to manage.
         """
+        if not isinstance(status_bar, QStatusBar):
+            raise TypeError("StatusBarManager requires a QStatusBar instance.")
+
         self.status_bar = status_bar
+        self._persistent_message = "Ready" # Store the last non-temporary message
 
-        # Status message label
-        self.status_label = QLabel("Ready")
-        self.status_bar.addWidget(self.status_label, 1)
+        # --- Permanent Widgets ---
+        # Status message label (takes available space)
+        self.status_label = QLabel(self._persistent_message)
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter) # Align left
+        self.status_bar.addWidget(self.status_label, 1) # Stretch factor 1
 
-        # Progress bar (hidden by default)
+        # Progress bar (aligned right, fixed width)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setMaximumWidth(200)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False) # Initially hide percentage text
+        self.progress_bar.setMaximumWidth(200)   # Set a max width
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        # Add as permanent widget - appears on the right
         self.status_bar.addPermanentWidget(self.progress_bar)
-        self.progress_bar.hide()
+        self.progress_bar.hide() # Hide initially
 
-        logger.info("Status bar manager initialized")
+        logger.info("StatusBarManager initialized.")
 
-    def set_status(self, message: str):
+    def set_status(self, message: str, temporary: bool = False, timeout: int = 4000):
         """
-        Set the status message.
+        Sets the status message displayed in the status bar.
 
         Args:
-            message: Status message to display
+            message: The text message to display.
+            temporary: If True, use QStatusBar.showMessage for a timed message.
+                       If False, set a persistent message on the label.
+            timeout: Duration in milliseconds for temporary messages.
         """
-        self.status_label.setText(message)
-        logger.info(f"Status: {message}")
+        if temporary:
+            # Use QStatusBar's built-in temporary message display
+            self.status_bar.showMessage(message, timeout)
+            logger.info(f"Temporary Status (>{timeout}ms): {message}")
+        else:
+            # Set the persistent message on our label
+            self._persistent_message = message
+            self.status_label.setText(self._persistent_message)
+            # Clear any previous temporary message shown by QStatusBar
+            self.status_bar.clearMessage()
+            logger.info(f"Status Set: {message}")
 
     def show_progress(self, value: int, maximum: int = 100, text: Optional[str] = None):
         """
-        Show and update the progress bar.
+        Shows and updates the progress bar.
 
         Args:
-            value: Current progress value
-            maximum: Maximum progress value
-            text: Optional custom text to display in the progress bar
+            value: Current progress value.
+            maximum: Maximum progress value (set to 0 for indeterminate).
+            text: Optional text to display on the progress bar (overrides percentage).
         """
-        # Update progress bar range and value
+        is_indeterminate = (maximum == 0)
+
         self.progress_bar.setRange(0, maximum)
-        self.progress_bar.setValue(value)
+        self.progress_bar.setValue(value if not is_indeterminate else 0) # Value ignored if indeterminate
+        self.progress_bar.setTextVisible(text is not None or not is_indeterminate) # Visible if text or determinate
 
-        # Set custom format if text is provided
-        if text:
+        if text is not None:
             self.progress_bar.setFormat(text)
+        elif is_indeterminate:
+            self.progress_bar.setFormat("") # No text for indeterminate
         else:
-            self.progress_bar.setFormat("%p%")
+            self.progress_bar.setFormat("%p%") # Show percentage
 
-        # Ensure the progress bar is visible
-        self.progress_bar.show()
+        if not self.progress_bar.isVisible():
+            self.progress_bar.show()
+        # Avoid flooding logs with progress updates
+        # logger.debug(f"Progress Update: {value}/{maximum}")
 
     def hide_progress(self):
-        """Hide the progress bar."""
-        self.progress_bar.hide()
+        """Hides the progress bar and resets its state."""
+        if self.progress_bar.isVisible():
+            self.progress_bar.hide()
+            self.progress_bar.reset() # Resets range, value, format
+            self.progress_bar.setTextVisible(False)
+            logger.debug("Progress bar hidden and reset.")
 
     def set_busy(self, busy: bool = True, message: Optional[str] = None):
         """
-        Set the status bar to busy or ready state.
+        Sets the status bar state to indicate processing or readiness.
 
         Args:
-            busy: True to show busy indicator, False to show ready
-            message: Optional status message to display
+            busy: True to show an indeterminate progress bar and busy message.
+                  False to hide progress and show a ready/idle message.
+            message: Optional message to display. Defaults to "Processing..." or "Ready."
         """
         if busy:
-            # Display busy indicator (indeterminate progress)
-            self.progress_bar.setRange(0, 0)  # Indeterminate progress
-            self.progress_bar.show()
-
-            # Set status message if provided
-            if message:
-                self.set_status(message)
+            busy_msg = message or "Processing..."
+            self.set_status(busy_msg, temporary=False) # Set persistent busy message
+            self.show_progress(0, 0) # Show indeterminate progress
+            logger.info(f"Status set to busy: {busy_msg}")
         else:
-            # Reset progress bar and hide it
-            self.progress_bar.setRange(0, 100)
+            idle_msg = message or self._persistent_message # Restore last persistent or use provided
+            # If last persistent was also a busy message, default to "Ready."
+            if idle_msg.lower().startswith("processing") or idle_msg.lower().startswith("starting"):
+                idle_msg = "Ready."
             self.hide_progress()
-
-            # Set status message if provided, otherwise "Ready"
-            self.set_status(message if message else "Ready")
-
-    def show_temporary_message(self, message: str, timeout: int = 3000):
-        """
-        Show a temporary message in the status bar.
-
-        Args:
-            message: Message to display
-            timeout: Time in milliseconds before reverting to previous message
-        """
-        # Store the current message to restore later
-        current_message = self.status_label.text()
-
-        # Show the temporary message
-        self.set_status(message)
-
-        # Use QTimer to restore the previous message after the timeout
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(timeout, lambda: self.set_status(current_message))
+            self.set_status(idle_msg, temporary=False) # Set persistent idle message
+            logger.info(f"Status set to ready: {idle_msg}")

@@ -1,447 +1,300 @@
+# gui/results_panel.py
 """
-Results Panel Module
+Results Panel Module - Updated for Summary Data
 
-This module defines the ResultsPanel widget, which displays analysis results,
-transfer plan information, and visualizations of the optimized media segments.
+Displays analysis results (EditShot status), transfer plan segments,
+and unresolved shots using summary data provided by MainWindow's worker thread.
 """
 
 import logging
+import os
 from typing import List, Dict, Any, Optional
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTreeWidget,
-    QTreeWidgetItem, QLabel, QTextEdit, QGroupBox, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QWidget, QVBoxLayout, QTabWidget, QTableWidget, QTableWidgetItem,
+    QHeaderView, QLabel, QAbstractItemView
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QColor  # For row coloring
 
-import opentimelineio as otio
-
-from core.models import TransferPlan
-
-# Configure logging
 logger = logging.getLogger(__name__)
 
 
 class ResultsPanel(QWidget):
-    """
-    Panel for displaying analysis results and transfer plan information.
-
-    This panel shows information about source files, gaps, optimized segments,
-    and potential savings.
-    """
+    """Panel for displaying analysis results and transfer plan information."""
 
     def __init__(self, parent=None):
-        """
-        Initialize the results panel.
-
-        Args:
-            parent: Parent widget
-        """
         super().__init__(parent)
-
-        # Set up the UI
         self.init_ui()
-
-        logger.info("Results panel initialized")
+        logger.info("ResultsPanel initialized.")
 
     def init_ui(self):
         """Set up the user interface."""
-        # Main layout
         main_layout = QVBoxLayout(self)
-
-        # Title
-        title_label = QLabel("Analysis Results")
+        title_label = QLabel("3. Results & Plan")
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         main_layout.addWidget(title_label)
 
-        # Tab widget for different result views
         self.tabs = QTabWidget()
 
-        # Create tabs
-        self.source_tab = QWidget()
-        self.analysis_tab = QWidget()
-        self.plan_tab = QWidget()
-        self.segments_tab = QWidget()
+        # Create tab widgets
+        self.edit_shots_tab = QWidget()
+        self.transfer_segments_tab = QWidget()
+        self.unresolved_tab = QWidget()
 
-        self.setup_source_tab()
-        self.setup_analysis_tab()
-        self.setup_plan_tab()
-        self.setup_segments_tab()
+        # Setup layout and widgets for each tab
+        self._setup_edit_shots_tab()
+        self._setup_transfer_segments_tab()
+        self._setup_unresolved_tab()
 
-        # Add tabs to tab widget
-        self.tabs.addTab(self.source_tab, "Source Files")
-        self.tabs.addTab(self.analysis_tab, "Gap Analysis")
-        self.tabs.addTab(self.plan_tab, "Transfer Plan")
-        self.tabs.addTab(self.segments_tab, "Segments")
+        # Add tabs
+        self.tabs.addTab(self.edit_shots_tab, "Source Analysis Status")  # More descriptive name
+        self.tabs.addTab(self.transfer_segments_tab, "Calculated Transfer Segments")
+        self.tabs.addTab(self.unresolved_tab, "Unresolved / Lookup Errors")
 
-        # Add tab widget to main layout
         main_layout.addWidget(self.tabs)
+        logger.debug("ResultsPanel UI created.")
 
-    def setup_source_tab(self):
-        """Set up the Source Files tab."""
-        layout = QVBoxLayout(self.source_tab)
+    def _setup_edit_shots_tab(self):
+        """Sets up the tab displaying EditShots and their source lookup status."""
+        layout = QVBoxLayout(self.edit_shots_tab)
+        self.edit_shots_table = QTableWidget()
+        # Columns match keys in the summary dict from get_edit_shots_summary
+        self.edit_shots_table.setColumnCount(5)
+        self.edit_shots_table.setHorizontalHeaderLabels([
+            "Clip Name", "Edit Media (Proxy/Mezz)", "Found Original Source", "Lookup Status", "Edit Range (Source)"
+        ])
+        self._configure_table_widget(self.edit_shots_table)
+        # Column sizing adjustments
+        self.edit_shots_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
+        self.edit_shots_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.edit_shots_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.edit_shots_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.edit_shots_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Interactive)
+        layout.addWidget(self.edit_shots_table)
 
-        # Source files tree
-        self.source_tree = QTreeWidget()
-        self.source_tree.setHeaderLabels(["Source File", "Usage Count", "Duration"])
-        self.source_tree.setAlternatingRowColors(True)
-        self.source_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.source_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.source_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-
-        layout.addWidget(self.source_tree)
-
-    def setup_analysis_tab(self):
-        """Set up the Gap Analysis tab."""
-        layout = QVBoxLayout(self.analysis_tab)
-
-        # Splitter for dividable sections
-        splitter = QSplitter(Qt.Vertical)
-        layout.addWidget(splitter)
-
-        # Group for gap statistics
-        gap_stats_group = QGroupBox("Gap Statistics")
-        gap_stats_layout = QVBoxLayout(gap_stats_group)
-
-        self.gap_stats_text = QTextEdit()
-        self.gap_stats_text.setReadOnly(True)
-        gap_stats_layout.addWidget(self.gap_stats_text)
-
-        # Group for detected gaps
-        gaps_group = QGroupBox("Detected Gaps")
-        gaps_layout = QVBoxLayout(gaps_group)
-
-        self.gaps_tree = QTreeWidget()
-        self.gaps_tree.setHeaderLabels(["Source File", "Gap Start", "Gap End", "Duration (sec)"])
-        self.gaps_tree.setAlternatingRowColors(True)
-        self.gaps_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-
-        gaps_layout.addWidget(self.gaps_tree)
-
-        # Add groups to splitter
-        splitter.addWidget(gap_stats_group)
-        splitter.addWidget(gaps_group)
-
-        # Set initial splitter sizes
-        splitter.setSizes([100, 300])
-
-    def setup_plan_tab(self):
-        """Set up the Transfer Plan tab."""
-        layout = QVBoxLayout(self.plan_tab)
-
-        # Plan info
-        plan_info_group = QGroupBox("Plan Information")
-        plan_info_layout = QVBoxLayout(plan_info_group)
-
-        self.plan_info_text = QTextEdit()
-        self.plan_info_text.setReadOnly(True)
-        plan_info_layout.addWidget(self.plan_info_text)
-
-        # Savings info
-        savings_group = QGroupBox("Estimated Savings")
-        savings_layout = QVBoxLayout(savings_group)
-
-        self.savings_text = QTextEdit()
-        self.savings_text.setReadOnly(True)
-        savings_layout.addWidget(self.savings_text)
-
-        # Add groups to layout
-        layout.addWidget(plan_info_group)
-        layout.addWidget(savings_group)
-
-    def setup_segments_tab(self):
-        """Set up the Segments tab."""
-        layout = QVBoxLayout(self.segments_tab)
-
-        # Segments table
+    def _setup_transfer_segments_tab(self):
+        """Sets up the tab displaying calculated TransferSegments."""
+        layout = QVBoxLayout(self.transfer_segments_tab)
         self.segments_table = QTableWidget()
-        self.segments_table.setColumnCount(5)
-        self.segments_table.setHorizontalHeaderLabels(
-            ["Segment Name", "Source File", "Start Time", "End Time", "Duration (sec)"]
-        )
-        self.segments_table.setAlternatingRowColors(True)
-        self.segments_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        # Columns match keys in the summary dict from get_transfer_segments_summary
+        self.segments_table.setColumnCount(6)
+        self.segments_table.setHorizontalHeaderLabels([
+            "#", "Original Source", "Start TC", "Duration (sec)", "Transcode Status", "Error / Notes"
+        ])
+        self._configure_table_widget(self.segments_table)
+        # Column sizing adjustments
+        self.segments_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.segments_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-
+        self.segments_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.segments_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.segments_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.segments_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         layout.addWidget(self.segments_table)
 
+    def _setup_unresolved_tab(self):
+        """Sets up the tab displaying shots that couldn't be resolved or had errors."""
+        layout = QVBoxLayout(self.unresolved_tab)
+        self.unresolved_table = QTableWidget()
+        # Columns match keys in the summary dict from get_unresolved_shots_summary
+        self.unresolved_table.setColumnCount(4)
+        self.unresolved_table.setHorizontalHeaderLabels([
+            "Clip Name", "Edit Media Path", "Lookup Status", "Edit Range (Source)"
+        ])
+        self._configure_table_widget(self.unresolved_table)
+        # Column sizing adjustments
+        self.unresolved_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
+        self.unresolved_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.unresolved_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.unresolved_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Interactive)
+        layout.addWidget(self.unresolved_table)
+
+    def _configure_table_widget(self, table: QTableWidget):
+        """Applies common settings to table widgets."""
+        table.setAlternatingRowColors(True)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.ExtendedSelection)
+        table.verticalHeader().setVisible(False)
+        table.setShowGrid(True)
+        # Enable sorting
+        table.setSortingEnabled(True)
+
+    # --- Public Methods to Update UI ---
+
     def clear_results(self):
-        """Clear all result displays."""
-        # Clear source tab
-        self.source_tree.clear()
+        """Clears all tables in the results panel."""
+        logger.debug("Clearing ResultsPanel tables.")
+        self.edit_shots_table.setSortingEnabled(False)  # Disable sorting during clear
+        self.edit_shots_table.setRowCount(0)
+        self.edit_shots_table.setSortingEnabled(True)
 
-        # Clear analysis tab
-        self.gap_stats_text.clear()
-        self.gaps_tree.clear()
-
-        # Clear plan tab
-        self.plan_info_text.clear()
-        self.savings_text.clear()
-
-        # Clear segments tab
+        self.segments_table.setSortingEnabled(False)
         self.segments_table.setRowCount(0)
+        self.segments_table.setSortingEnabled(True)
 
-    def set_analysis_results(self, source_files: List[str],
-                             savings: Dict[str, Any],
-                             stats: Dict[str, Any]):
+        self.unresolved_table.setSortingEnabled(False)
+        self.unresolved_table.setRowCount(0)
+        self.unresolved_table.setSortingEnabled(True)
+        logger.info("ResultsPanel views cleared.")
+
+    def display_analysis_summary(self, edit_shot_summary: List[Dict]):
         """
-        Set the analysis results data.
+        Updates the 'Source Analysis Status' tab with EditShot summary data.
 
         Args:
-            source_files: List of source file paths
-            savings: Dictionary with gap savings information
-            stats: Dictionary with timeline statistics
+            edit_shot_summary: List of dicts from harvester.get_edit_shots_summary().
         """
-        # Clear existing results
-        self.clear_results()
+        logger.info(f"Displaying analysis summary for {len(edit_shot_summary)} edit shots.")
+        self.edit_shots_table.setSortingEnabled(False)
+        self.edit_shots_table.setRowCount(len(edit_shot_summary))
+        unresolved_list = []  # Collect items for the unresolved tab
 
-        # Update source files tree
-        self._update_source_files(source_files, stats)
+        # Define colors for statuses
+        status_colors = {
+            "found": QColor(200, 255, 200),  # Light green
+            "not_found": QColor(255, 200, 200),  # Light red
+            "error": QColor(255, 160, 122),  # Light salmon/orange
+            "pending": QColor(255, 255, 200),  # Light yellow
+            "default": QColor(Qt.white)
+        }
 
-        # Update gap analysis information
-        self._update_gap_analysis(savings)
+        for i, shot_info in enumerate(edit_shot_summary):
+            # --- Get data from summary dictionary ---
+            clip_name = shot_info.get('name', 'N/A')
+            edit_path = shot_info.get('proxy_path', 'N/A')
+            original_path = shot_info.get('original_path', 'N/A')
+            status = shot_info.get('status', 'unknown')
+            edit_range_str = shot_info.get('edit_range', 'N/A')
 
-        # Select source files tab
-        self.tabs.setCurrentIndex(0)
+            # --- Create QTableWidgetItems ---
+            name_item = QTableWidgetItem(clip_name)
+            edit_path_item = QTableWidgetItem(edit_path)
+            edit_path_item.setToolTip(edit_path)  # Show full path on hover
+            original_path_item = QTableWidgetItem(original_path)  # Show full path here
+            if status == 'found': original_path_item.setToolTip(original_path)
+            status_item = QTableWidgetItem(status)
+            range_item = QTableWidgetItem(edit_range_str)
 
-        logger.info("Analysis results updated")
+            # --- Populate Row ---
+            self.edit_shots_table.setItem(i, 0, name_item)
+            self.edit_shots_table.setItem(i, 1, edit_path_item)
+            self.edit_shots_table.setItem(i, 2, original_path_item)
+            self.edit_shots_table.setItem(i, 3, status_item)
+            self.edit_shots_table.setItem(i, 4, range_item)
 
-    def set_plan_results(self, plan: TransferPlan):
+            # --- Color Row ---
+            row_color = status_colors.get(status, status_colors["default"])
+            for col in range(self.edit_shots_table.columnCount()):
+                self.edit_shots_table.item(i, col).setBackground(row_color)
+
+            # --- Add to unresolved list if needed ---
+            if status != 'found':
+                unresolved_list.append(shot_info)
+
+        self.edit_shots_table.setSortingEnabled(True)
+        self.edit_shots_table.resizeColumnsToContents()  # Adjust columns after populating
+        self.display_unresolved_summary(unresolved_list)  # Update the other tab
+        self.tabs.setCurrentIndex(0)  # Switch view to this tab
+
+    def display_plan_summary(self, segment_summary: List[Dict]):
         """
-        Set the transfer plan results data.
+        Updates the 'Transfer Plan Segments' tab with segment summary data.
 
         Args:
-            plan: TransferPlan object with plan information
+            segment_summary: List of dicts from harvester.get_transfer_segments_summary().
         """
-        # Update plan information
-        self._update_plan_info(plan)
+        logger.info(f"Displaying transfer plan summary for {len(segment_summary)} segments.")
+        self.segments_table.setSortingEnabled(False)
+        self.segments_table.setRowCount(len(segment_summary))
 
-        # Update segments information
-        self._update_segments_info(plan.get_segments())
+        # Define colors for statuses
+        status_colors = {
+            "completed": QColor(200, 255, 200),  # Light green
+            "failed": QColor(255, 150, 150),  # Stronger red
+            "running": QColor(173, 216, 230),  # Light blue
+            "pending": QColor(225, 225, 225),  # Light grey for pending transcode
+            "calculated": QColor(255, 255, 200),  # Light yellow for ready-to-transcode
+            "default": QColor(Qt.white)
+        }
 
-        # Select transfer plan tab
-        self.tabs.setCurrentIndex(2)
+        for i, seg_info in enumerate(segment_summary):
+            # --- Get data from summary dictionary ---
+            index = seg_info.get('index', i + 1)
+            source_path = seg_info.get('source_path', 'N/A')
+            start_tc = seg_info.get('range_start_tc', 'N/A')
+            duration_sec = seg_info.get('duration_sec', 0.0)
+            status = seg_info.get('status', 'pending')
+            error_notes = seg_info.get('error', '')
 
-        logger.info("Transfer plan results updated")
+            # --- Create QTableWidgetItems ---
+            index_item = QTableWidgetItem(str(index))
+            index_item.setTextAlignment(Qt.AlignCenter)
+            source_item = QTableWidgetItem(os.path.basename(source_path))
+            source_item.setToolTip(source_path)  # Full path on hover
+            tc_item = QTableWidgetItem(start_tc)
+            duration_item = QTableWidgetItem(f"{duration_sec:.3f}")  # Show milliseconds
+            status_item = QTableWidgetItem(status)
+            error_item = QTableWidgetItem(error_notes)
 
-    def _update_source_files(self, source_files: List[str], stats: Dict[str, Any]):
-        """
-        Update the source files tree with data.
-
-        Args:
-            source_files: List of source file paths
-            stats: Dictionary with timeline statistics
-        """
-        self.source_tree.clear()
-
-        # Source usage info if available in stats
-        source_usage = {}
-        if 'source_usage' in stats:
-            source_usage = stats['source_usage']
-
-        for source_file in source_files:
-            item = QTreeWidgetItem(self.source_tree)
-
-            # Get basename for display
-            base_name = source_file.split('/')[-1] if '/' in source_file else source_file.split('\\')[-1]
-
-            # Set file name (column 0)
-            item.setText(0, base_name)
-            item.setToolTip(0, source_file)
-
-            # Set usage count (column 1)
-            usage_count = len(source_usage.get(source_file, [])) if source_usage else 0
-            item.setText(1, str(usage_count))
-
-            # No duration info at this point (column 2)
-            item.setText(2, "Unknown")
-
-        # Adjust column widths
-        for i in range(self.source_tree.columnCount()):
-            self.source_tree.resizeColumnToContents(i)
-
-    def _update_gap_analysis(self, savings: Dict[str, Any]):
-        """
-        Update the gap analysis information.
-
-        Args:
-            savings: Dictionary with gap savings information
-        """
-        # Update gap statistics text
-        stats_text = ""
-
-        # Total gaps and total gap duration
-        total_gaps = savings.get('total_gaps', 0)
-        total_gap_duration = savings.get('total_gap_duration')
-
-        if total_gap_duration:
-            if hasattr(total_gap_duration, 'value') and hasattr(total_gap_duration, 'rate'):
-                gap_seconds = total_gap_duration.value / total_gap_duration.rate
-                stats_text += f"Total Gaps: {total_gaps}\n"
-                stats_text += f"Total Gap Duration: {gap_seconds:.2f} seconds\n\n"
-
-        # Savings by source
-        if 'savings_by_source' in savings:
-            stats_text += "Savings by Source:\n"
-            for source, info in savings['savings_by_source'].items():
-                base_name = source.split('/')[-1] if '/' in source else source.split('\\')[-1]
-
-                num_gaps = info.get('num_gaps', 0)
-                source_gap_duration = info.get('total_gap_duration')
-
-                if source_gap_duration:
-                    if hasattr(source_gap_duration, 'value') and hasattr(source_gap_duration, 'rate'):
-                        gap_seconds = source_gap_duration.value / source_gap_duration.rate
-                        stats_text += f"- {base_name}: {num_gaps} gaps, {gap_seconds:.2f} seconds\n"
-
-        self.gap_stats_text.setText(stats_text)
-
-        # Update gaps tree
-        self.gaps_tree.clear()
-
-        # Group gaps by source file
-        if 'savings_by_source' in savings:
-            for source, info in savings['savings_by_source'].items():
-                base_name = source.split('/')[-1] if '/' in source else source.split('\\')[-1]
-
-                # Create parent item for this source
-                source_item = QTreeWidgetItem(self.gaps_tree)
-                source_item.setText(0, base_name)
-                source_item.setToolTip(0, source)
-
-                # Add gap details if available
-                if 'gaps' in info:
-                    for gap in info['gaps']:
-                        gap_item = QTreeWidgetItem(source_item)
-
-                        # Start and end times
-                        if 'gap_start' in gap and hasattr(gap['gap_start'], 'value') and hasattr(gap['gap_start'],
-                                                                                                 'rate'):
-                            start_seconds = gap['gap_start'].value / gap['gap_start'].rate
-                            gap_item.setText(1, f"{start_seconds:.2f}s")
-
-                        if 'gap_end' in gap and hasattr(gap['gap_end'], 'value') and hasattr(gap['gap_end'], 'rate'):
-                            end_seconds = gap['gap_end'].value / gap['gap_end'].rate
-                            gap_item.setText(2, f"{end_seconds:.2f}s")
-
-                        # Duration
-                        if 'duration' in gap and hasattr(gap['duration'], 'value') and hasattr(gap['duration'], 'rate'):
-                            duration_seconds = gap['duration'].value / gap['duration'].rate
-                            gap_item.setText(3, f"{duration_seconds:.2f}")
-
-        # Expand all items
-        self.gaps_tree.expandAll()
-
-        # Adjust column widths
-        for i in range(self.gaps_tree.columnCount()):
-            self.gaps_tree.resizeColumnToContents(i)
-
-    def _update_plan_info(self, plan: TransferPlan):
-        """
-        Update the transfer plan information.
-
-        Args:
-            plan: TransferPlan object with plan information
-        """
-        # Update plan info text
-        info_text = f"<h3>Transfer Plan: {plan.name}</h3>\n\n"
-
-        # Basic information
-        info_text += "<b>Settings:</b><br>"
-        info_text += f"Minimum Gap Duration: {plan.min_gap_duration} seconds<br>"
-        info_text += f"Start Handles: {plan.start_handles} frames<br>"
-        info_text += f"End Handles: {plan.end_handles} frames<br><br>"
-
-        # Statistics
-        if hasattr(plan, 'statistics') and plan.statistics:
-            stats = plan.statistics
-
-            info_text += "<b>Statistics:</b><br>"
-            info_text += f"Timelines: {stats.get('timeline_count', 0)}<br>"
-            info_text += f"Unique Sources: {stats.get('unique_sources', 0)}<br>"
-            info_text += f"Total Segments: {stats.get('segment_count', 0)}<br>"
-
-            # Total duration
-            total_duration = stats.get('total_duration')
-            if total_duration and hasattr(total_duration, 'value') and hasattr(total_duration, 'rate'):
-                duration_seconds = total_duration.value / total_duration.rate
-                info_text += f"Total Duration: {duration_seconds:.2f} seconds<br>"
-
-        self.plan_info_text.setHtml(info_text)
-
-        # Update savings text
-        savings_text = "<h3>Estimated Savings</h3>\n\n"
-
-        # Get savings information
-        savings = plan.estimate_savings()
-
-        if 'original_duration' in savings and 'optimized_duration' in savings:
-            original = savings['original_duration']
-            optimized = savings['optimized_duration']
-
-            if (hasattr(original, 'value') and hasattr(original, 'rate') and
-                    hasattr(optimized, 'value') and hasattr(optimized, 'rate')):
-
-                orig_seconds = original.value / original.rate
-                opt_seconds = optimized.value / optimized.rate
-
-                savings_text += f"<b>Original Duration:</b> {orig_seconds:.2f} seconds<br>"
-                savings_text += f"<b>Optimized Duration:</b> {opt_seconds:.2f} seconds<br>"
-
-                if orig_seconds > 0:
-                    reduction = orig_seconds - opt_seconds
-                    percentage = (reduction / orig_seconds) * 100
-
-                    savings_text += f"<b>Duration Reduction:</b> {reduction:.2f} seconds ({percentage:.2f}%)<br>"
-
-        self.savings_text.setHtml(savings_text)
-
-    def _update_segments_info(self, segments):
-        """
-        Update the segments table.
-
-        Args:
-            segments: List of TransferSegment objects
-        """
-        # Clear existing rows
-        self.segments_table.setRowCount(0)
-
-        # Add rows for each segment
-        self.segments_table.setRowCount(len(segments))
-
-        for i, segment in enumerate(segments):
-            # Segment name
-            name_item = QTableWidgetItem(segment.name)
-            self.segments_table.setItem(i, 0, name_item)
-
-            # Source file (basename)
-            base_name = segment.source_file.split('/')[-1] if '/' in segment.source_file else \
-            segment.source_file.split('\\')[-1]
-            source_item = QTableWidgetItem(base_name)
-            source_item.setToolTip(segment.source_file)
+            # --- Populate Row ---
+            self.segments_table.setItem(i, 0, index_item)
             self.segments_table.setItem(i, 1, source_item)
+            self.segments_table.setItem(i, 2, tc_item)
+            self.segments_table.setItem(i, 3, duration_item)
+            self.segments_table.setItem(i, 4, status_item)
+            self.segments_table.setItem(i, 5, error_item)
 
-            # Start time
-            if segment.source_start and hasattr(segment.source_start, 'value') and hasattr(segment.source_start,
-                                                                                           'rate'):
-                start_seconds = segment.source_start.value / segment.source_start.rate
-                start_item = QTableWidgetItem(f"{start_seconds:.2f}s")
-                self.segments_table.setItem(i, 2, start_item)
+            # --- Color Row ---
+            row_color = status_colors.get(status, status_colors["default"])
+            for col in range(self.segments_table.columnCount()):
+                if self.segments_table.item(i, col):  # Check item exists
+                    self.segments_table.item(i, col).setBackground(row_color)
 
-            # End time
-            if segment.source_end and hasattr(segment.source_end, 'value') and hasattr(segment.source_end, 'rate'):
-                end_seconds = segment.source_end.value / segment.source_end.rate
-                end_item = QTableWidgetItem(f"{end_seconds:.2f}s")
-                self.segments_table.setItem(i, 3, end_item)
+        self.segments_table.setSortingEnabled(True)
+        self.segments_table.resizeColumnsToContents()
+        self.tabs.setCurrentIndex(1)  # Switch view to this tab
 
-            # Duration
-            if segment.duration and hasattr(segment.duration, 'value') and hasattr(segment.duration, 'rate'):
-                duration_seconds = segment.duration.value / segment.duration.rate
-                duration_item = QTableWidgetItem(f"{duration_seconds:.2f}")
-                self.segments_table.setItem(i, 4, duration_item)
+    def display_unresolved_summary(self, unresolved_summary: List[Dict]):
+        """Updates the 'Unresolved / Errors' tab."""
+        logger.info(f"Displaying {len(unresolved_summary)} unresolved/error items.")
+        self.unresolved_table.setSortingEnabled(False)
+        self.unresolved_table.setRowCount(len(unresolved_summary))
 
-        # Adjust column widths
-        for i in range(self.segments_table.columnCount()):
-            self.segments_table.resizeColumnToContents(i)
+        # Define colors
+        status_colors = {
+            "not_found": QColor(255, 200, 200),  # Light red
+            "error": QColor(255, 160, 122),  # Light salmon/orange
+            "pending": QColor(255, 255, 200),  # Light yellow (shouldn't be here if analysis ran)
+            "default": QColor(Qt.white)
+        }
+
+        for i, shot_info in enumerate(unresolved_summary):
+            # --- Get data ---
+            clip_name = shot_info.get('name', 'N/A')
+            edit_path = shot_info.get('proxy_path', 'N/A')
+            status = shot_info.get('status', 'unknown')
+            edit_range_str = shot_info.get('edit_range', 'N/A')
+
+            # --- Create items ---
+            name_item = QTableWidgetItem(clip_name)
+            edit_path_item = QTableWidgetItem(edit_path)
+            edit_path_item.setToolTip(edit_path)
+            status_item = QTableWidgetItem(status)
+            range_item = QTableWidgetItem(edit_range_str)
+
+            # --- Populate row ---
+            self.unresolved_table.setItem(i, 0, name_item)
+            self.unresolved_table.setItem(i, 1, edit_path_item)
+            self.unresolved_table.setItem(i, 2, status_item)
+            self.unresolved_table.setItem(i, 3, range_item)
+
+            # --- Color row ---
+            row_color = status_colors.get(status, status_colors["default"])
+            for col in range(self.unresolved_table.columnCount()):
+                self.unresolved_table.item(i, col).setBackground(row_color)
+
+        self.unresolved_table.setSortingEnabled(True)
+        self.unresolved_table.resizeColumnsToContents()
+        # Do not automatically switch to this tab, let user navigate
+        logger.debug("Unresolved/Errors tab updated.")
