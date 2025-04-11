@@ -104,6 +104,7 @@ class SettingsPanel(QWidget):
         ]
 
     def init_ui(self):
+        """Set up the user interface."""
         main_layout = QVBoxLayout(self)
         title_label = QLabel("2. Configure Analysis & Transfer")
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -111,40 +112,49 @@ class SettingsPanel(QWidget):
 
         # --- Source Lookup Settings ---
         source_group = QGroupBox("Original Source Lookup")
-        source_layout = QVBoxLayout(source_group)
+        source_layout = QVBoxLayout(source_group)  # Layout DLA tej grupy
 
-        # Strategy Selector
+        # Strategy Selector (bez zmian)
         strategy_layout = QHBoxLayout()
         strategy_layout.addWidget(QLabel("Lookup Strategy:"))
         self.strategy_combo = QComboBox()
-        # TODO: Populate with actual implemented strategies later
-        self.strategy_combo.addItems(["basic_name_match"])  # Add more as implemented
+        self.strategy_combo.addItems(["basic_name_match"])
         strategy_layout.addWidget(self.strategy_combo)
         strategy_layout.addStretch()
-        source_layout.addLayout(strategy_layout)
+        source_layout.addLayout(strategy_layout)  # Add strategy layout first
 
-        # Search Paths List
+        # Search Paths Label
         source_layout.addWidget(QLabel("Search Paths (Directories containing originals):"))
+
+        # Search Paths List Widget
         self.path_list_widget = QListWidget()
         self.path_list_widget.setAlternatingRowColors(True)
         self.path_list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        source_layout.addWidget(self.path_list_widget)
 
-        # Search Path Buttons
+        # *** KLUCZOWA ZMIANA: Ustawienie Size Policy dla listy ścieżek ***
+        path_list_policy = QSizePolicy(QSizePolicy.Expanding,
+                                       QSizePolicy.Expanding)  # Expand horizontally and vertically
+        self.path_list_widget.setSizePolicy(path_list_policy)
+        # Optional: Set minimum height for the list
+        self.path_list_widget.setMinimumHeight(60)  # Ensure at least a few items are visible
+
+        # Add path list widget to the group's layout WITH A STRETCH FACTOR
+        source_layout.addWidget(self.path_list_widget, 1)  # <-- DODAJ STRETCH FACTOR (np. 1)
+
+        # Search Path Buttons (bez zmian)
         path_button_layout = QHBoxLayout()
         self.add_path_button = QPushButton("Add Path...")
         self.remove_path_button = QPushButton("Remove Selected")
-        self.remove_path_button.setEnabled(False)  # Disable initially
+        self.remove_path_button.setEnabled(False)
         path_button_layout.addStretch()
         path_button_layout.addWidget(self.add_path_button)
         path_button_layout.addWidget(self.remove_path_button)
-        source_layout.addLayout(path_button_layout)
-        main_layout.addWidget(source_group)
+        source_layout.addLayout(path_button_layout)  # Add buttons below the list
 
         # --- Handle Frames Settings ---
         self.handles_group = QGroupBox("Handles (Extra Frames)")
-        # ... (Layout and widgets as before) ...
         handles_layout = QFormLayout(self.handles_group)
+        # ... (widgets and layout for handles as before) ...
         self.start_handles_spin = QSpinBox(minimum=0, maximum=1000, value=24, suffix=" frames")
         self.start_handles_spin.setToolTip("Frames added before each segment")
         self.end_handles_spin = QSpinBox(minimum=0, maximum=1000, value=24, suffix=" frames", enabled=False)
@@ -153,41 +163,44 @@ class SettingsPanel(QWidget):
         handles_layout.addRow("Start Handles:", self.start_handles_spin)
         handles_layout.addRow("End Handles:", self.end_handles_spin)
         handles_layout.addRow("", self.same_handles_check)
-        main_layout.addWidget(self.handles_group)
 
         # --- Output Settings ---
         output_group = QGroupBox("Output & Transcode Settings")
         output_layout = QVBoxLayout(output_group)
-
-        # Output Directory
+        # ... (directory selection layout as before) ...
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(QLabel("Output Directory:"))
         self.output_dir_edit = QLineEdit()
         self.output_dir_edit.setPlaceholderText("Select base directory for transcoded files...")
-        self.output_dir_edit.setReadOnly(True)  # User selects via button
+        self.output_dir_edit.setReadOnly(True)
         self.browse_dir_button = QPushButton("Browse...")
-        dir_layout.addWidget(self.output_dir_edit, 1)  # Stretch line edit
+        dir_layout.addWidget(self.output_dir_edit, 1)
         dir_layout.addWidget(self.browse_dir_button)
         output_layout.addLayout(dir_layout)
-        output_layout.addSpacing(10)
+        output_layout.addSpacing(5)
 
-        # Output Profiles Table
+        # Output Profiles Table (with size policy set as before)
         output_layout.addWidget(QLabel("Output Profiles:"))
         self.profile_table = QTableWidget()
+        # ... (table setup as before) ...
         self.profile_table.setColumnCount(3)
         self.profile_table.setHorizontalHeaderLabels(["Name", "Extension", "FFmpeg Options"])
         self.profile_table.setAlternatingRowColors(True)
         self.profile_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.profile_table.setSelectionMode(QAbstractItemView.SingleSelection)  # Edit one at a time
+        self.profile_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.profile_table.verticalHeader().setVisible(False)
         self.profile_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Interactive)
         self.profile_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.profile_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.profile_table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # Don't allow direct editing
-        output_layout.addWidget(self.profile_table)
+        self.profile_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table_policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.profile_table.setSizePolicy(table_policy)
+        self.profile_table.setMinimumHeight(100)
+        output_layout.addWidget(self.profile_table, 1)  # Give table stretch factor within its group
 
-        # Profile Buttons
+        # Profile Buttons (bez zmian)
         profile_button_layout = QHBoxLayout()
+        # ... (add buttons as before) ...
         self.add_profile_button = QPushButton("Add Profile...")
         self.edit_profile_button = QPushButton("Edit Selected...")
         self.remove_profile_button = QPushButton("Remove Selected")
@@ -198,20 +211,25 @@ class SettingsPanel(QWidget):
         profile_button_layout.addWidget(self.edit_profile_button)
         profile_button_layout.addWidget(self.remove_profile_button)
         output_layout.addLayout(profile_button_layout)
-        main_layout.addWidget(output_group)
 
-        # --- Action Button ---
+        # --- Add Groups to Main Layout with Stretch Factors ---
+        # Now source_group also has a stretch factor
+        main_layout.addWidget(source_group, 2)  # Source Lookup - give it some space to stretch (e.g., factor 2)
+        main_layout.addWidget(self.handles_group, 0)  # Handles - least priority
+        main_layout.addWidget(output_group, 3)  # Output & Transcode - most priority
+
+        # --- Action Button (bez zmian) ---
         button_layout = QHBoxLayout()
+        # ... (add button as before) ...
         button_layout.addStretch(1)
         self.create_plan_button = QPushButton("Calculate Transfer Plan")
         self.create_plan_button.setStyleSheet("font-weight: bold;")
         self.create_plan_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.create_plan_button.setEnabled(False)  # Disabled until analysis is done
+        self.create_plan_button.setEnabled(False)
         button_layout.addWidget(self.create_plan_button)
         main_layout.addLayout(button_layout)
 
-        main_layout.addStretch(1)  # Push elements towards top
-        logger.debug("SettingsPanel UI created.")
+        logger.debug("SettingsPanel UI updated with size policy for path list and profile table.")
 
     def connect_signals(self):
         # Handles
