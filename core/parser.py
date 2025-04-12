@@ -1,31 +1,27 @@
-# core/parser.py
 """
 Parses edit files, extracting identifier, source point range (edit_media_range),
-timeline position range (timeline_range), and metadata. Aims to correctly
-interpret ranges relative to file start vs sequence start.
+timeline position range (timeline_range), and metadata. Correctly handles
+different file formats and their timing reference systems.
 """
 import logging
 import os
 from typing import List, Optional, Union
 
-import opentimelineio
 import opentimelineio as otio
 from opentimelineio import opentime
-from opentimelineio import schema  # Import schema to reference its classes
+from opentimelineio import schema
 
 from .models import EditShot
 
 logger = logging.getLogger(__name__)
 
 
-# Helper function to get rate safely
 def get_rate(
         otio_obj: Union[schema.Clip, schema.Timeline, schema.Track, schema.ExternalReference, schema.MissingReference],
         default_rate: float = 25.0) -> float:
     """Safely attempts to get a valid frame rate from various OTIO objects."""
     rate = default_rate
     try:
-        # Check for rate attribute (might be float or RationalTime)
         if hasattr(otio_obj, 'rate'):
             obj_rate = getattr(otio_obj, 'rate')
             if isinstance(obj_rate, opentime.RationalTime) and obj_rate.rate > 0:
@@ -33,37 +29,39 @@ def get_rate(
             elif isinstance(obj_rate, (float, int)) and obj_rate > 0:
                 return float(obj_rate)
 
-        # Check common time range attributes
         for range_attr in ['source_range', 'available_range', 'duration', 'global_start_time']:
             if hasattr(otio_obj, range_attr):
                 time_obj = getattr(otio_obj, range_attr)
-                # Check for duration rate first in TimeRange
-                if isinstance(time_obj, opentime.TimeRange) and time_obj.duration and time_obj.duration.rate > 0:
-                    return time_obj.duration.rate
-                # Then check start_time rate in TimeRange
-                elif isinstance(time_obj, opentime.TimeRange) and time_obj.start_time and time_obj.start_time.rate > 0:
-                    return time_obj.start_time.rate
-                # Then check rate if it's a RationalTime directly
+                if isinstance(time_obj, opentime.TimeRange):
+                    if time_obj.duration and time_obj.duration.rate > 0:
+                        return time_obj.duration.rate
+                    elif time_obj.start_time and time_obj.start_time.rate > 0:
+                        return time_obj.start_time.rate
                 elif isinstance(time_obj, opentime.RationalTime) and time_obj.rate > 0:
                     return time_obj.rate
-        # Add more specific checks if needed for certain object types
 
     except Exception as e:
-        logger.debug(f"Could not determine rate for {type(otio_obj)}, using default {default_rate}. Error: {e}")
-    # Return rate only if valid, otherwise default
-    rate_val = rate if isinstance(rate, (float, int)) and rate > 0 else default_rate
-    logger.debug(f"Determined rate for {type(otio_obj)}: {rate_val}")
-    return rate_val
+        logger.debug(f"Could not determine rate for {type(otio_obj)}: {e}")
+
+    final_rate = rate if isinstance(rate, (float, int)) and rate > 0 else default_rate
+    logger.debug(f"Using rate {final_rate} for {type(otio_obj)}")
+    return final_rate
 
 
 def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
     """
     Reads an edit file, extracting essential EditShot data.
+    Handles special timing for AAF files where source points are relative offsets.
     """
-    # --- File Reading and Timeline Detection ---
-    if not os.path.exists(file_path): raise FileNotFoundError(f"Edit file not found: {file_path}")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Edit file not found: {file_path}")
+
     logger.info(f"Attempting to read edit file: {file_path}")
     timeline: Optional[schema.Timeline] = None
+
+    # Detect if file is AAF to apply special processing
+    is_aaf = file_path.lower().endswith('.aaf')
+
     try:
         result = otio.adapters.read_from_file(file_path)
         if isinstance(result, schema.Timeline):
@@ -72,34 +70,44 @@ def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
             logger.warning(
                 f"OTIO returned a Collection for '{os.path.basename(file_path)}'. Searching for main timeline.")
             timeline = next(result.find_children(kind=schema.Timeline), None)
-        if not timeline: raise otio.exceptions.OTIOError("No valid timeline found in file.")
+
+        if not timeline:
+            raise otio.exceptions.OTIOError("No valid timeline found in file.")
+
         logger.info(f"Successfully read OTIO timeline: '{timeline.name}'")
-        # --- Get Sequence Rate and Start TC ---
+
+        # Get Sequence Rate and Start TC
         sequence_rate = get_rate(timeline, default_rate=25.0)
-        # global_start_time SHOULD represent the actual starting timecode of the sequence
         sequence_start_time = timeline.global_start_time
-        if not sequence_start_time or sequence_start_time.rate <= 0:
+
+        if not sequence_start_time or not isinstance(sequence_start_time,
+                                                     opentime.RationalTime) or sequence_start_time.rate <= 0:
             logger.warning(f"Could not determine valid global_start_time from timeline. Assuming 0@{sequence_rate}fps.")
             sequence_start_time = opentime.RationalTime(0, sequence_rate)
         else:
-            # Ensure sequence_start_time uses the determined sequence_rate if they differ
+            # Ensure sequence_start_time uses the determined sequence_rate
             if sequence_start_time.rate != sequence_rate:
-                logger.warning(
-                    f"Timeline global_start_time rate ({sequence_start_time.rate}) differs from determined sequence rate ({sequence_rate}). Rescaling global_start_time.")
+                logger.warning(f"Timeline global_start_time rate mismatch. Rescaling.")
                 try:
                     sequence_start_time = sequence_start_time.rescaled_to(sequence_rate)
                 except Exception as rescale_err:
                     logger.error(f"Failed to rescale global_start_time: {rescale_err}. Assuming 0 start time.")
                     sequence_start_time = opentime.RationalTime(0, sequence_rate)
 
-        logger.info(
-            f"Sequence Rate: {sequence_rate}, Sequence Start Time: {sequence_start_time} ({opentime.to_timecode(sequence_start_time, sequence_rate)})")
+        # Format for logging
+        start_tc_str = "N/A"
+        try:
+            start_tc_str = opentime.to_timecode(sequence_start_time, sequence_rate)
+        except:
+            pass
+
+        logger.info(f"Sequence Rate: {sequence_rate}, Sequence Start Time: {sequence_start_time} ({start_tc_str})")
 
     except Exception as e:
         logger.error(f"Error reading/parsing edit file '{file_path}': {e}", exc_info=True)
-        raise  # Re-raise original error type if possible
+        raise
 
-    # --- Parsing the OTIO timeline into EditShot objects ---
+    # Parsing the OTIO timeline into EditShot objects
     edit_shots: List[EditShot] = []
     clip_counter = 0
     skipped_counter = 0
@@ -108,86 +116,94 @@ def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
     try:
         for clip in timeline.find_clips():
             item_counter += 1
-            if not isinstance(clip, schema.Clip): continue
-            media_ref = clip.media_reference
-            if not media_ref: continue
+            if not isinstance(clip, schema.Clip):
+                continue
 
-            # --- Get Source Point Range (Essential) ---
-            # This range is relative to the start of the media reference file
+            media_ref = clip.media_reference
+            if not media_ref:
+                continue
+
+            # Get Source Point Range (Essential)
             source_point_range = clip.source_range
+
             if not source_point_range or \
                     not isinstance(source_point_range.start_time, opentime.RationalTime) or \
                     not isinstance(source_point_range.duration, opentime.RationalTime) or \
                     source_point_range.duration.value <= 0 or \
                     source_point_range.duration.rate <= 0:
-                logger.warning(
-                    f"Skipping clip #{item_counter} ('{clip.name}'): Invalid/missing clip.source_range: {source_point_range}")
-                skipped_counter += 1;
+                logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): Invalid source_range.")
+                skipped_counter += 1
                 continue
+
+            # Store the rate associated with the source point range
             source_point_rate = source_point_range.duration.rate
-            logger.debug(
-                f"  Clip #{item_counter} ('{clip.name}'): Source Point Range = {source_point_range} (Rate: {source_point_rate})")
 
-            # --- Get Edit Position Range (Absolute on Timeline) ---
-            # This range represents the clip's position on the sequence timeline
-            edit_position_range: Optional[opentimelineio.opentime.TimeRange] = None
+            # Important: For AAF files, set a flag to indicate post-processing needed
+            # source_point_range from AAF is an offset, not absolute position
+            needs_aaf_offset_correction = is_aaf
+
+            # Get Edit Position Range (Absolute on Timeline)
+            edit_position_range: Optional[otio.opentime.TimeRange] = None
             try:
-                # Get the range of the clip within the timeline's time space
-                # This SHOULD return an absolute range including timeline.global_start_time
-                parent_range = timeline.range_of_child(clip)
-                logger.debug(f"  Raw parent_range from range_of_child(): {parent_range}")
+                relative_range = timeline.range_of_child(clip)
 
-                # Validate the received range
-                if parent_range and \
-                        isinstance(parent_range.start_time, opentime.RationalTime) and \
-                        isinstance(parent_range.duration, opentime.RationalTime) and \
-                        parent_range.duration.value > 0 and \
-                        parent_range.start_time.rate > 0 and \
-                        parent_range.duration.rate > 0:
+                if relative_range and \
+                        isinstance(relative_range.start_time, opentime.RationalTime) and \
+                        isinstance(relative_range.duration, opentime.RationalTime) and \
+                        relative_range.duration.value > 0 and \
+                        relative_range.start_time.rate > 0 and \
+                        relative_range.duration.rate > 0:
 
-                    # Ensure the range uses the main sequence rate
-                    if parent_range.start_time.rate != sequence_rate:
-                        logger.debug(
-                            f"  Rescaling edit position range from {parent_range.start_time.rate} to {sequence_rate}")
-                        rescaled_start = parent_range.start_time.rescaled_to(sequence_rate)
-                        rescaled_duration = parent_range.duration.rescaled_to(sequence_rate)
-                        edit_position_range = opentime.TimeRange(start_time=rescaled_start, duration=rescaled_duration)
-                    else:
-                        edit_position_range = parent_range  # Use directly if rates match
+                    # Rescale components to sequence rate if necessary
+                    edit_start_relative = relative_range.start_time
+                    edit_duration = relative_range.duration
+
+                    if edit_start_relative.rate != sequence_rate:
+                        edit_start_relative = edit_start_relative.rescaled_to(sequence_rate)
+                    if edit_duration.rate != sequence_rate:
+                        edit_duration = edit_duration.rescaled_to(sequence_rate)
+
+                    # Calculate ABSOLUTE start time by adding sequence start time
+                    absolute_start_time = sequence_start_time + edit_start_relative
+                    edit_position_range = opentime.TimeRange(start_time=absolute_start_time, duration=edit_duration)
+
                 else:
-                    logger.warning(
-                        f"  Invalid or zero duration parent_range obtained for clip #{item_counter} ('{clip.name}').")
+                    logger.warning(f"Invalid relative_range for clip #{item_counter} ('{clip.name}').")
 
             except Exception as range_err:
-                logger.error(
-                    f"  Error calculating edit position range for clip #{item_counter} ('{clip.name}'): {range_err}",
-                    exc_info=False)
-            logger.debug(
-                f"  Clip #{item_counter} ('{clip.name}'): Final Edit Position Range = {edit_position_range} (Target Rate: {sequence_rate})")
-            # --- End Edit Position Range ---
+                logger.error(f"Error calculating edit position range: {range_err}", exc_info=False)
 
-            # --- Get Identifier ---
-            identifier = None;
+            # Get Identifier
+            identifier = None
             clip_name_str = clip.name.strip() if clip.name else None
+
             if media_ref.metadata:  # Try metadata
                 for key in ["Source File", "Source Name"]:
                     found_key = next((k for k in media_ref.metadata if k.lower() == key.lower()), None)
-                    if found_key: meta_val = str(
-                        media_ref.metadata[found_key]).strip(); identifier = meta_val if meta_val else identifier; break
-            if not identifier and clip_name_str: identifier = clip_name_str  # Try clip name
-            if not identifier and isinstance(media_ref,
-                                             schema.ExternalReference) and media_ref.target_url:  # Try URL basename
+                    if found_key:
+                        meta_val = str(media_ref.metadata[found_key]).strip()
+                        identifier = meta_val if meta_val else identifier
+                        break
+
+            if not identifier and clip_name_str:
+                identifier = clip_name_str  # Try clip name
+
+            if not identifier and isinstance(media_ref, schema.ExternalReference) and media_ref.target_url:
                 try:
                     identifier = os.path.basename(
                         otio.url_utils.url_to_filepath(media_ref.target_url)).strip() or identifier
                 except:
                     pass
-            if not identifier and media_ref.name: identifier = media_ref.name.strip() or identifier  # Try ref name
-            if not identifier: logger.warning(
-                f"Skipping clip #{item_counter} ('{clip.name}'): No identifier found."); skipped_counter += 1; continue
-            # --- End Identifier ---
 
-            # --- Extract Metadata (Safely) ---
+            if not identifier and media_ref.name:
+                identifier = media_ref.name.strip() or identifier
+
+            if not identifier:
+                logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): No identifier found.")
+                skipped_counter += 1
+                continue
+
+            # Extract Metadata (Safely)
             edit_metadata = {}
             if media_ref.metadata:
                 try:
@@ -205,9 +221,12 @@ def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
                             edit_metadata[k] = str(v)
                 except Exception as meta_copy_err:
                     edit_metadata['_metadata_error'] = str(meta_copy_err)
-            # --- End Metadata ---
 
-            # --- Create EditShot ---
+            # Add AAF correction flag to metadata if needed
+            if needs_aaf_offset_correction:
+                edit_metadata['_needs_aaf_offset_correction'] = True
+
+            # Create EditShot
             shot = EditShot(
                 clip_name=clip.name if clip.name else None,
                 edit_media_path=identifier,  # Stores the identifier
@@ -216,16 +235,81 @@ def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
                 edit_metadata=edit_metadata,
                 lookup_status="pending"
             )
+
             edit_shots.append(shot)
             clip_counter += 1
-            logger.debug(
-                f"Parsed EditShot #{clip_counter}: Clip='{shot.clip_name or 'Unnamed'}', ID='{identifier}', SourcePointRange={source_point_range}, EditPosRange={edit_position_range}")
+            logger.debug(f"Parsed EditShot #{clip_counter}: Clip='{shot.clip_name or 'Unnamed'}', ID='{identifier}'")
 
     except Exception as e:
-        msg = f"Error processing clips in '{os.path.basename(file_path)}': {e}";
-        logger.error(msg, exc_info=True);
+        msg = f"Error processing clips in '{os.path.basename(file_path)}': {e}"
+        logger.error(msg, exc_info=True)
         raise Exception(msg) from e
 
     logger.info(
         f"Finished parsing '{os.path.basename(file_path)}'. Created {clip_counter} valid EditShots (skipped {skipped_counter}).")
     return edit_shots
+
+
+def correct_aaf_source_points(edit_shots: List[EditShot]) -> int:
+    """
+    Post-processes AAF source point ranges using source timecode from original files.
+    This function should be called after find_original_sources() has populated
+    the start_timecode values from ffprobe.
+
+    Args:
+        edit_shots: List of EditShots that may need AAF offset correction
+
+    Returns:
+        Number of shots corrected
+    """
+    corrected_count = 0
+
+    for shot in edit_shots:
+        # Check if this shot needs AAF correction and has required data
+        if shot.lookup_status == 'found' and \
+                shot.found_original_source and \
+                shot.found_original_source.start_timecode and \
+                shot.edit_metadata.get('_needs_aaf_offset_correction', False):
+
+            # Get source timecode from ffprobe (the true absolute Source IN)
+            source_in = shot.found_original_source.start_timecode
+
+            # Get the relative offset stored in edit_media_range.start_time
+            offset = shot.edit_media_range.start_time
+
+            # Ensure rates match for addition
+            if offset.rate != source_in.rate:
+                try:
+                    offset = offset.rescaled_to(source_in.rate)
+                except Exception as e:
+                    logger.error(f"Failed to rescale AAF offset for '{shot.clip_name}': {e}")
+                    continue
+
+            try:
+                # Calculate the absolute start time
+                absolute_start = source_in + offset
+
+                # Create corrected range with absolute start time
+                corrected_range = opentime.TimeRange(
+                    start_time=absolute_start,
+                    duration=shot.edit_media_range.duration
+                )
+
+                # Update the shot's edit_media_range with corrected values
+                shot.edit_media_range = corrected_range
+
+                # Remove the correction flag
+                shot.edit_metadata.pop('_needs_aaf_offset_correction', None)
+
+                corrected_count += 1
+
+                logger.debug(f"Corrected AAF source point range for '{shot.clip_name}': "
+                             f"Source IN {source_in} + Offset {offset} = {absolute_start}")
+
+            except Exception as e:
+                logger.error(f"Error correcting AAF source point range for '{shot.clip_name}': {e}")
+
+    if corrected_count > 0:
+        logger.info(f"Corrected {corrected_count} AAF source point ranges using original timecodes")
+
+    return corrected_count
