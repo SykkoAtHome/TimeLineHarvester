@@ -1,10 +1,8 @@
 # core/parser.py
 """
-Parses various edit file formats (EDL, AAF, XML) using OpenTimelineIO
-and converts the relevant timeline content into EditShot objects.
-Focuses on extracting a usable identifier and source range.
+Parses edit files, extracting an identifier (like filename or tape name)
+and source range for each clip, needed for source finding.
 """
-
 import logging
 import os
 from typing import List, Optional
@@ -15,55 +13,30 @@ from .models import EditShot
 
 logger = logging.getLogger(__name__)
 
+
 def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
     """
-    Reads an edit file using OTIO, focusing on extracting essential EditShot data:
-    identifier, source_range, and metadata.
+    Reads an edit file, extracting essential EditShot data:
+    identifier (stored in edit_media_path), source_range, and metadata.
     """
-    # ... (File existence check and OTIO reading logic remain the same) ...
-    if not os.path.exists(file_path):
-        msg = f"Edit file not found at path: {file_path}"
-        logger.error(msg)
-        raise FileNotFoundError(msg)
-
-    logger.info(f"Attempting to read edit file with OTIO auto-detection: {file_path}")
+    # --- File Reading and Timeline Detection ---
+    if not os.path.exists(file_path): raise FileNotFoundError(f"Edit file not found: {file_path}")
+    logger.info(f"Attempting to read edit file: {file_path}")
     timeline: Optional[otio.schema.Timeline] = None
-
     try:
         result = otio.adapters.read_from_file(file_path)
+        # Simplified Timeline/Collection handling
         if isinstance(result, otio.schema.Timeline):
             timeline = result
-            logger.info(f"Successfully read OTIO timeline: '{timeline.name}'")
         elif isinstance(result, otio.schema.SerializableCollection):
-            logger.warning(f"OTIO returned a Collection for '{os.path.basename(file_path)}'. Searching for the main timeline.")
-            timelines_in_collection = list(result.find_children(kind=otio.schema.Timeline, search_range=None))
-            if timelines_in_collection:
-                timeline = timelines_in_collection[0]
-                logger.info(f"Using the first timeline found in the collection: '{timeline.name}'")
-                if len(timelines_in_collection) > 1:
-                    logger.warning(f"Multiple timelines found; only the first ('{timeline.name}') will be processed.")
-            else:
-                msg = f"OTIO read '{os.path.basename(file_path)}' as a Collection, but no Timeline objects were found within it."
-                logger.error(msg)
-                raise otio.exceptions.OTIOError(msg)
-        else:
-            msg = f"OTIO read '{os.path.basename(file_path)}' but returned an unexpected type: {type(result)}. Expected Timeline or SerializableCollection."
-            logger.error(msg)
-            raise otio.exceptions.OTIOError(msg)
-
-    except otio.exceptions.NoAdapterFoundError as e:
-        msg = f"OTIO could not find an adapter for '{os.path.basename(file_path)}'. Is the required adapter (e.g., pyaaf2 for AAF) installed? Original error: {e}"
-        logger.error(msg)
-        raise otio.exceptions.OTIOError(msg) from e
-    except Exception as e:
-        if isinstance(e, otio.exceptions.OTIOError):
-            msg = f"OTIO error reading file '{os.path.basename(file_path)}': {e}"
-            logger.error(msg)
-            raise
-        else:
-            msg = f"An unexpected error occurred while reading '{os.path.basename(file_path)}': {e}"
-            logger.error(msg, exc_info=True)
-            raise Exception(msg) from e
+            logger.warning(
+                f"OTIO returned a Collection for '{os.path.basename(file_path)}'. Searching for the main timeline.")
+            timeline = next(result.find_children(kind=otio.schema.Timeline), None)  # Find first timeline or None
+        if not timeline: raise otio.exceptions.OTIOError("No valid timeline found in file.")
+        logger.info(f"Successfully read OTIO timeline: '{timeline.name}'")
+    except Exception as e:  # Catch all read errors
+        logger.error(f"Error reading/parsing edit file '{file_path}': {e}", exc_info=True)
+        raise  # Re-raise after logging
 
     # --- Parsing the OTIO timeline into EditShot objects ---
     edit_shots: List[EditShot] = []
@@ -75,137 +48,136 @@ def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
         for clip in timeline.find_clips():
             item_counter += 1
 
-            if not isinstance(clip, otio.schema.Clip):
-                logger.warning(f"Item #{item_counter} found by find_clips was not a Clip: {type(clip)}. Skipping.")
-                skipped_counter += 1
-                continue
+            if not isinstance(clip, otio.schema.Clip): continue  # Skip non-clips
 
             media_ref = clip.media_reference
-            if not media_ref:
-                logger.debug(f"Skipping clip #{item_counter} ('{clip.name}'): No media reference.")
-                skipped_counter += 1
-                continue
+            if not media_ref: continue  # Skip if no media ref
 
-            # We primarily care about the source_range and an identifier.
-            # Let's try to get the source range first.
+            # --- Get Source Range (Essential) ---
             source_range = clip.source_range
-            if not source_range:
-                logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): Clip has no source_range defined.")
+            if not source_range or not isinstance(source_range.start_time, opentime.RationalTime) or \
+                    not isinstance(source_range.duration, opentime.RationalTime):
+                logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): Invalid or missing source_range.")
                 skipped_counter += 1
                 continue
-            # Validate TimeRange components
-            if not isinstance(source_range.start_time, opentime.RationalTime) or \
-               not isinstance(source_range.duration, opentime.RationalTime):
-                 logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): Invalid components in source_range {source_range}.")
-                 skipped_counter += 1
-                 continue
-            # Validate duration
-            try:
+            try:  # Check duration validity
                 if source_range.duration.value <= 0 or source_range.duration.rate <= 0:
-                     logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): Clip has zero/negative/invalid duration ({source_range.duration}) in source_range.")
-                     skipped_counter += 1
-                     continue
-            except Exception as e: # Catch potential comparison errors or zero rate issues
-                logger.error(f"Error checking duration for clip #{item_counter}: {e}. Skipping.", exc_info=False)
+                    logger.warning(
+                        f"Skipping clip #{item_counter} ('{clip.name}'): Invalid source_range duration {source_range.duration}.")
+                    skipped_counter += 1
+                    continue
+            except Exception:
+                logger.warning(
+                    f"Skipping clip #{item_counter} ('{clip.name}'): Error checking source_range duration {source_range.duration}.")
                 skipped_counter += 1
                 continue
+            # --- End Source Range ---
 
-            # Now, try to get the best possible identifier string for SourceFinder
-            edit_media_identifier = None
-            # 1. Try specific metadata keys (most reliable if present)
-            possible_id_keys = ["Source File", "Source Name", "Tape Name", "Reel Name"]
+            # --- Get Identifier (for SourceFinder) ---
+            identifier = None
+            clip_name_str = clip.name.strip() if clip.name else None
+
+            # 1. Try Metadata (Source File/Name)
             if media_ref.metadata:
-                 for key in possible_id_keys:
-                     found_meta_key = next((k for k in media_ref.metadata if k.lower() == key.lower()), None)
-                     if found_meta_key:
-                          meta_val = str(media_ref.metadata[found_meta_key]).strip()
-                          if meta_val:
-                              edit_media_identifier = meta_val
-                              logger.debug(f"  Using metadata '{found_meta_key}': '{edit_media_identifier}' as identifier for clip #{item_counter} ('{clip.name}').")
-                              break
-            # 2. If no metadata, try target_url (might be just a filename)
-            if not edit_media_identifier and isinstance(media_ref, otio.schema.ExternalReference) and media_ref.target_url:
-                identifier_from_url = media_ref.target_url.strip()
-                if identifier_from_url:
-                    edit_media_identifier = identifier_from_url
-                    logger.debug(f"  Using target_url: '{edit_media_identifier}' as identifier for clip #{item_counter} ('{clip.name}').")
-            # 3. Fallback to media reference name
-            if not edit_media_identifier and media_ref.name:
-                identifier_from_name = media_ref.name.strip()
-                if identifier_from_name:
-                    edit_media_identifier = identifier_from_name
-                    logger.debug(f"  Using media_ref name: '{edit_media_identifier}' as identifier for clip #{item_counter} ('{clip.name}').")
-            # 4. Final fallback: clip name itself
-            if not edit_media_identifier and clip.name:
-                 identifier_from_clipname = clip.name.strip()
-                 if identifier_from_clipname:
-                      edit_media_identifier = identifier_from_clipname
-                      logger.debug(f"  Using clip name: '{edit_media_identifier}' as identifier for clip #{item_counter}.")
+                for key in ["Source File", "Source Name"]:
+                    found_meta_key = next((k for k in media_ref.metadata if k.lower() == key.lower()), None)
+                    if found_meta_key:
+                        meta_val = str(media_ref.metadata[found_meta_key]).strip()
+                        if meta_val:
+                            identifier = meta_val
+                            logger.debug(
+                                f"  Using metadata '{found_meta_key}': '{identifier}' as identifier for clip #{item_counter}.")
+                            break
 
+            # 2. Try Clip Name
+            if not identifier and clip_name_str:
+                identifier = clip_name_str
+                logger.debug(f"  Using clip name: '{identifier}' as identifier for clip #{item_counter}.")
 
-            if not edit_media_identifier:
-                 logger.warning(f"Skipping clip #{item_counter} ('{clip.name}'): Could not determine any usable identifier.")
-                 skipped_counter += 1
-                 continue
+            # 3. Try basename from target_url
+            if not identifier and isinstance(media_ref, otio.schema.ExternalReference) and media_ref.target_url:
+                try:
+                    url_path = otio.url_utils.url_to_filepath(media_ref.target_url)
+                    url_basename = os.path.basename(url_path).strip()
+                    if url_basename:
+                        identifier = url_basename
+                        logger.debug(
+                            f"  Using basename from target_url: '{identifier}' as identifier for clip #{item_counter}.")
+                except Exception as url_err:
+                    logger.warning(f"  Could not extract basename from target_url '{media_ref.target_url}': {url_err}")
+
+            # 4. Try media_ref name
+            if not identifier and media_ref.name:
+                media_ref_name_str = media_ref.name.strip()
+                if media_ref_name_str:
+                    identifier = media_ref_name_str
+                    logger.debug(f"  Using media_ref name: '{identifier}' as identifier for clip #{item_counter}.")
+
+            # Final check
+            if not identifier:
+                logger.warning(
+                    f"Skipping clip #{item_counter} ('{clip.name}'): Could not determine any usable identifier.")
+                skipped_counter += 1
+                continue
+            # --- End Identifier ---
 
             # --- Extract Metadata (Safely) ---
             edit_metadata = {}
             if media_ref.metadata:
-                 try:
-                     for k, v in media_ref.metadata.items():
-                         if isinstance(v, (str, int, float, bool, type(None))):
-                             edit_metadata[k] = v
-                         elif isinstance(v, (list, tuple)):
-                              try:
-                                  # Only copy list/tuple if items are basic types
-                                  if all(isinstance(item, (str, int, float, bool, type(None))) for item in v):
-                                       edit_metadata[k] = list(v) # Make a copy
-                                  else:
-                                       edit_metadata[k] = str(v)
-                              except: edit_metadata[k] = str(v)
-                         else: edit_metadata[k] = str(v)
-                 except Exception as meta_copy_err:
-                      logger.warning(f"  Could not fully process metadata for clip #{item_counter}: {meta_copy_err}")
-                      edit_metadata['_metadata_error'] = str(meta_copy_err)
+                try:  # Safe copy logic
+                    for k, v in media_ref.metadata.items():
+                        if isinstance(v, (str, int, float, bool, type(None))):
+                            edit_metadata[k] = v
+                        elif isinstance(v, (list, tuple)):
+                            try:
+                                edit_metadata[k] = [
+                                    item if isinstance(item, (str, int, float, bool, type(None))) else str(item) for
+                                    item in v]
+                            except:
+                                edit_metadata[k] = str(v)
+                        else:
+                            edit_metadata[k] = str(v)
+                except Exception as meta_copy_err:
+                    logger.warning(f"  Could not fully process metadata for clip #{item_counter}: {meta_copy_err}")
+                    edit_metadata['_metadata_error'] = str(meta_copy_err)
+            # --- End Metadata ---
 
-            # --- Timeline Range (Optional, Best Effort) ---
-            # Keep the previous manual rescale logic, but don't skip the clip if it fails
+            # --- Timeline Range (Optional - Best Effort) ---
             timeline_range: Optional[otio.opentime.TimeRange] = None
             try:
                 parent_range = timeline.range_of_child(clip)
-                if parent_range and isinstance(parent_range.start_time, opentime.RationalTime) and isinstance(parent_range.duration, opentime.RationalTime):
-                     timeline_rate = 24.0
-                     if timeline.global_start_time and timeline.global_start_time.rate > 0:
-                         timeline_rate = timeline.global_start_time.rate
-                     start_rate = parent_range.start_time.rate
-                     duration_rate = parent_range.duration.rate
-                     if start_rate > 0 and duration_rate > 0:
-                         try:
-                             rescaled_start = parent_range.start_time.rescaled_to(timeline_rate)
-                             rescaled_duration = parent_range.duration.rescaled_to(timeline_rate)
-                             temp_range = opentime.TimeRange(start_time=rescaled_start, duration=rescaled_duration)
-                             zero_timeline_duration = opentime.RationalTime(0, timeline_rate)
-                             if temp_range.duration > zero_timeline_duration:
-                                 timeline_range = temp_range # Assign only if valid
-                             else: logger.debug(f"  Timeline range duration zero/negative after rescale for clip #{item_counter}.")
-                         except Exception as rescale_err: logger.debug(f"  Error rescaling timeline range components for clip #{item_counter}: {rescale_err}")
-                     else: logger.debug(f"  Zero rate in parent range components for clip #{item_counter}.")
-                else: logger.debug(f"  Could not get valid parent_range for clip #{item_counter}.")
-            except Exception as range_err: logger.debug(f"  Error getting timeline range for clip #{item_counter}: {range_err}")
+                if parent_range and isinstance(parent_range.start_time, opentime.RationalTime) and isinstance(
+                        parent_range.duration, opentime.RationalTime):
+                    timeline_rate = 24.0  # Default rate
+                    if timeline.global_start_time and timeline.global_start_time.rate > 0:
+                        timeline_rate = timeline.global_start_time.rate
+                    start_rate = parent_range.start_time.rate
+                    duration_rate = parent_range.duration.rate
+                    if start_rate > 0 and duration_rate > 0:
+                        try:  # Manual rescale
+                            rescaled_start = parent_range.start_time.rescaled_to(timeline_rate)
+                            rescaled_duration = parent_range.duration.rescaled_to(timeline_rate)
+                            temp_range = opentime.TimeRange(start_time=rescaled_start, duration=rescaled_duration)
+                            if temp_range.duration.value > 0: timeline_range = temp_range
+                        except Exception:
+                            pass  # Ignore rescale errors silently
+            except Exception:
+                pass  # Ignore range_of_child errors silently
+            # --- End Timeline Range ---
 
-
-            # --- Create EditShot Object ---
+            # --- Create EditShot ---
             shot = EditShot(
                 clip_name=clip.name if clip.name else None,
-                edit_media_path=edit_media_identifier, # Use the best identifier found
-                edit_media_range=source_range,         # Must be valid to reach here
-                timeline_range=timeline_range,         # Optional
-                edit_metadata=edit_metadata,           # Processed metadata
+                edit_media_path=identifier,  # Store the identifier here
+                edit_media_range=source_range,
+                timeline_range=timeline_range,
+                edit_metadata=edit_metadata,
                 lookup_status="pending"
             )
             edit_shots.append(shot)
             clip_counter += 1
-            logger.debug(f"Parsed EditShot #{clip_counter}: Clip='{shot.clip_name or 'Unnamed'}', ID='{edit_media_identifier}', Range={source_range}")
+            logger.debug(
+                f"Parsed EditShot #{clip_counter}: Clip='{shot.clip_name or 'Unnamed'}', ID='{identifier}', Range={source_range}")
 
     except Exception as e:
         msg = f"An error occurred while processing clips in '{os.path.basename(file_path)}': {e}"
@@ -214,5 +186,4 @@ def read_and_parse_edit_file(file_path: str) -> List[EditShot]:
 
     logger.info(
         f"Finished parsing '{os.path.basename(file_path)}'. Processed ~{item_counter} timeline items. Created {clip_counter} valid EditShots (skipped {skipped_counter} items).")
-
     return edit_shots
