@@ -504,13 +504,29 @@ class MainWindow(QMainWindow):
     # --- Task Starting Slots ---
     @pyqtSlot()
     def start_analysis_task(self):
-        """Starts the 'analyze' background task."""
+        """Configures harvester, clears previous results, and starts 'analyze' task."""
         if self._is_worker_busy(): return
         if not self._sync_ui_to_harvester(): return
         if not self.harvester.edit_files: QMessageBox.warning(self, "No Edit Files", "Add edit files."); return
-        if not self.harvester.source_search_paths: QMessageBox.warning(self, "Config Missing", "Add Original Source Paths."); return
+        if not self.harvester.source_search_paths: QMessageBox.warning(self, "Config Missing",
+                                                                       "Add Original Source Paths."); return
+
+        # --- <<< NEW: Clear previous calculation results >>> ---
+        logger.info("Clearing previous calculation results before starting new analysis.")
+        self.harvester.color_transfer_batch = None  # Clear core batch data
+        self.harvester.online_transfer_batch = None  # Clear core batch data
+        if self.color_prep_tab:  # Clear GUI table for calculated segments
+            self.color_prep_tab.results_widget.segments_table.setRowCount(0)
+        if self.online_prep_tab:  # Clear online tab results if needed
+            # self.online_prep_tab.results_widget.segments_table.setRowCount(0) # Or similar clearing
+            pass
+        # Reset button states related to calculation/export
+        self._update_ui_state()
+        QApplication.processEvents()  # Allow UI to update
+        # --- <<< End Clearing >>> ---
+
         self._start_worker('analyze', "Analyzing files & finding sources...", {})
-        self.mark_project_dirty()
+        self.mark_project_dirty()  # New analysis makes project dirty
 
     @pyqtSlot()
     def start_calculate_color_task(self):

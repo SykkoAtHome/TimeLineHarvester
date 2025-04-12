@@ -712,39 +712,85 @@ class TimelineHarvester:
                 for meta in self.edit_files]
 
     def get_edit_shots_summary(self) -> List[Dict]:
-        """Provides summary for display, formatting edit_range as IN - OUT (X frames)."""
+        """
+        Provides detailed summary data for each EditShot for GUI display.
+        Relies on parser correctly setting absolute timeline_range.
+        """
         summary = []
+        # Get sequence rate from the first available timeline_range (or source)
+        # This might not be perfectly robust if sequence has no clips with timeline_range
+        sequence_rate : Optional[float] = None
         for shot in self.edit_shots:
-            original_path = shot.found_original_source.path if shot.found_original_source else "N/A"
-            range_str = "N/A"
-            if shot.edit_media_range and \
-                    isinstance(shot.edit_media_range.start_time, opentime.RationalTime) and \
-                    isinstance(shot.edit_media_range.duration, opentime.RationalTime):
-                try:
-                    rate = shot.edit_media_range.duration.rate
-                    if rate <= 0: rate = shot.edit_media_range.start_time.rate
-                    if rate > 0:
-                        start_time = shot.edit_media_range.start_time
-                        duration = shot.edit_media_range.duration
-                        end_time_incl = shot.edit_media_range.end_time_inclusive()
-                        start_tc = opentime.to_timecode(start_time, rate)
-                        end_tc = opentime.to_timecode(end_time_incl, rate)
-                        duration_frames = int(round(duration.value))
-                        range_str = f"{start_tc} - {end_tc} ({duration_frames} frames)"
-                    else:
-                        range_str = f"Invalid Rate ({rate})"
-                except Exception as e:
-                    logger.debug(f"Could not format range {shot.edit_media_range} for shot '{shot.clip_name}': {e}")
-                    range_str = str(shot.edit_media_range)  # Fallback
+             if shot.timeline_range and shot.timeline_range.duration.rate > 0:
+                  sequence_rate = shot.timeline_range.duration.rate
+                  break
+             elif shot.edit_media_range and shot.edit_media_range.duration.rate > 0:
+                  # Fallback to source point rate if timeline rate unknown
+                  sequence_rate = shot.edit_media_range.duration.rate
+                  # Don't break, keep looking for a timeline_range rate preferably
+        if sequence_rate is None:
+             sequence_rate = 25.0 # Final fallback
+             logger.warning(f"Could not determine sequence rate, assuming {sequence_rate}fps.")
 
-            edit_path_basename = os.path.basename(shot.edit_media_path or "") or "N/A"
-            summary.append({
-                "name": shot.clip_name or edit_path_basename,
-                "proxy_path": shot.edit_media_path or "N/A",  # Shows the identifier
-                "original_path": original_path,
+
+        for idx, shot in enumerate(self.edit_shots):
+            source_info = shot.found_original_source
+            original_path = source_info.path if source_info else "N/A"
+            edit_media_id = shot.edit_media_path or "N/A"
+
+            # --- Original Source File Times ---
+            source_start_rt = source_info.start_timecode if source_info else None
+            source_duration_rt = source_info.duration if source_info else None
+            source_rate = source_info.frame_rate if source_info else None
+            source_end_rt_excl = None
+            if source_start_rt and source_duration_rt:
+                try: source_end_rt_excl = source_start_rt + source_duration_rt;
+                except: pass
+
+            # --- Source Point Times (from EditShot.edit_media_range) ---
+            source_point_in_rt = shot.edit_media_range.start_time if shot.edit_media_range else None
+            source_point_duration_rt = shot.edit_media_range.duration if shot.edit_media_range else None
+            source_point_rate = source_point_duration_rt.rate if source_point_duration_rt and source_point_duration_rt.rate > 0 else None
+            source_point_out_rt_excl = None
+            if source_point_in_rt and source_point_duration_rt:
+                try: source_point_out_rt_excl = source_point_in_rt + source_point_duration_rt;
+                except: pass
+
+            # --- Edit Position Times (from EditShot.timeline_range) ---
+            # Parser should have stored the ABSOLUTE time here already
+            edit_in_rt = shot.timeline_range.start_time if shot.timeline_range else None
+            edit_duration_rt = shot.timeline_range.duration if shot.timeline_range else None
+            edit_out_rt_excl = None
+            # Recalculate sequence_rate specifically for this shot if possible? Safer to use overall rate.
+            current_sequence_rate = edit_duration_rt.rate if edit_duration_rt and edit_duration_rt.rate > 0 else sequence_rate # Use overall rate if needed
+            if edit_in_rt and edit_duration_rt:
+                try: edit_out_rt_excl = edit_in_rt + edit_duration_rt.rescaled_to(edit_in_rt.rate);
+                except: pass # Rescale dur to start rate for safety
+
+            # --- Prepare Summary Item ---
+            summary_item = {
+                "index": idx + 1,
+                "clip_name": shot.clip_name or os.path.basename(edit_media_id) or "N/A",
+                "edit_media_id": edit_media_id,
+                "source_path": original_path,
                 "status": shot.lookup_status,
-                "edit_range": range_str,
-            })
+                # Original Source
+                "source_in_rt": source_start_rt,
+                "source_out_rt_excl": source_end_rt_excl,
+                "source_duration_rt": source_duration_rt,
+                "source_rate": source_rate,
+                # Source Point (from Edit)
+                "source_point_in_rt": source_point_in_rt,
+                "source_point_out_rt_excl": source_point_out_rt_excl,
+                "source_point_duration_rt": source_point_duration_rt,
+                "source_point_rate": source_point_rate,
+                # Edit Position (Absolute on Timeline)
+                "edit_in_rt": edit_in_rt,           # Pass the absolute time from timeline_range
+                "edit_out_rt_excl": edit_out_rt_excl, # Pass the absolute time
+                "edit_duration_rt": edit_duration_rt, # Pass duration
+                "sequence_rate": current_sequence_rate # Pass the rate to use for formatting this shot's edit times
+            }
+            summary.append(summary_item)
         return summary
 
     def get_transfer_segments_summary(self, stage='color') -> List[Dict]:
@@ -777,52 +823,45 @@ class TimelineHarvester:
 
     def get_unresolved_shots_summary(self) -> List[Dict]:
         """
-        Provides a summary of shots that were not found or encountered errors,
+        Provides a summary of shots not found or with errors,
         formatting edit_range as IN - OUT (X frames).
         """
         unresolved_shots_list: List[EditShot] = []
         seen_identifiers: Set[Tuple[str, float, float, float, float]] = set()
 
         def add_unique_shot(shot: EditShot):
-            if not shot.edit_media_path or not isinstance(shot.edit_media_range, opentime.TimeRange) or \
-                    not isinstance(shot.edit_media_range.start_time, opentime.RationalTime) or \
-                    not isinstance(shot.edit_media_range.duration, opentime.RationalTime):
-                # logger.warning(f"Skipping shot with missing/invalid path/range in add_unique_shot: {shot.clip_name}")
-                return  # Silently skip invalid ones here
+            # Add shot to list if its identifier hasn't been seen
+            if not shot.edit_media_path or not isinstance(shot.edit_media_range, opentime.TimeRange): return
             try:
                 tr = shot.edit_media_range
+                if not isinstance(tr.start_time, opentime.RationalTime) or not isinstance(tr.duration,
+                                                                                          opentime.RationalTime): return
                 identifier = (shot.edit_media_path, float(tr.start_time.value), float(tr.start_time.rate),
                               float(tr.duration.value), float(tr.duration.rate))
-            except Exception as e:
-                logger.error(f"Failed to create identifier for shot {shot.clip_name or shot.edit_media_path}: {e}",
-                             exc_info=True)
-                return
-            if identifier not in seen_identifiers:
-                seen_identifiers.add(identifier)
-                unresolved_shots_list.append(shot)
+                if identifier not in seen_identifiers:
+                    seen_identifiers.add(identifier)
+                    unresolved_shots_list.append(shot)
+            except Exception:
+                return  # Ignore errors creating identifier
 
-        # Gather shots
-        processed_batches = []
-        if self.color_transfer_batch and self.color_transfer_batch.unresolved_shots:
-            processed_batches.append(self.color_transfer_batch.unresolved_shots)
-        if self.online_transfer_batch and self.online_transfer_batch.unresolved_shots:
-            processed_batches.append(self.online_transfer_batch.unresolved_shots)
-        for batch_unresolved in processed_batches:
-            for shot in batch_unresolved:
-                if isinstance(shot, EditShot): add_unique_shot(shot)
+        # Gather unresolved shots from batches and main list
+        for batch in [self.color_transfer_batch, self.online_transfer_batch]:
+            if batch and batch.unresolved_shots:
+                for shot in batch.unresolved_shots:
+                    if isinstance(shot, EditShot): add_unique_shot(shot)
         for shot in self.edit_shots:
             if shot.lookup_status != 'found': add_unique_shot(shot)
 
         # Create Summary
         summary = []
-        try:  # Sorting
+        try:  # Sort list
             sorted_unresolved = sorted(unresolved_shots_list, key=lambda s: s.edit_media_path or "")
         except Exception as sort_err:
             logger.warning(f"Could not sort unresolved shots: {sort_err}")
             sorted_unresolved = unresolved_shots_list
 
         for shot in sorted_unresolved:
-            # Format Edit Range
+            # Format Edit Range as IN - OUT (frames)
             range_str = "N/A"
             if shot.edit_media_range and \
                     isinstance(shot.edit_media_range.start_time, opentime.RationalTime) and \
@@ -841,15 +880,13 @@ class TimelineHarvester:
                     else:
                         range_str = f"Invalid Rate ({rate})"
                 except Exception as e:
-                    logger.debug(
-                        f"Could not format range {shot.edit_media_range} for unresolved shot '{shot.clip_name}': {e}")
-                    range_str = str(shot.edit_media_range)
+                    range_str = str(shot.edit_media_range)  # Fallback
 
             edit_path_basename = os.path.basename(shot.edit_media_path or "") or "N/A"
             summary.append({
                 "name": shot.clip_name or edit_path_basename,
-                "proxy_path": shot.edit_media_path or "N/A",
+                "proxy_path": shot.edit_media_path or "N/A",  # This holds the identifier
                 "status": shot.lookup_status,
-                "edit_range": range_str,
+                "edit_range": range_str,  # Use the formatted string
             })
         return summary
