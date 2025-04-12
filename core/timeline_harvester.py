@@ -10,7 +10,7 @@ managing project state save/load, and triggering export/transcode operations.
 import logging
 import os
 import json # For project save/load
-from typing import List, Dict, Optional, Any, Tuple, Callable, Union
+from typing import List, Dict, Optional, Any, Tuple, Callable, Union, Set
 import opentimelineio as otio
 from opentimelineio import opentime # Explicit import
 
@@ -634,26 +634,88 @@ class TimelineHarvester:
         return summary
 
     def get_unresolved_shots_summary(self) -> List[Dict]:
-         """Provides summary of shots not found or with errors across relevant batches."""
-         unresolved_in_batches = set()
-         # Check both batches for unresolved shots recorded during calculation
-         if self.color_transfer_batch and self.color_transfer_batch.unresolved_shots:
-             unresolved_in_batches.update(self.color_transfer_batch.unresolved_shots)
-         if self.online_transfer_batch and self.online_transfer_batch.unresolved_shots:
-              unresolved_in_batches.update(self.online_transfer_batch.unresolved_shots)
+        """
+        Provides a summary of shots that were not found or encountered errors
+        across relevant batches and the main analysis. Uses identifiers derived
+        from TimeRange components to ensure uniqueness and hashability.
+        """
+        unresolved_shots_list: List[EditShot] = []
+        # Use a set to store unique identifiers derived from TimeRange components
+        # Tuple format: (path, start_value, start_rate, duration_value, duration_rate)
+        # Using float for rates and values for reliable hashing
+        seen_identifiers: Set[Tuple[str, float, float, float, float]] = set()
 
-         # Also include shots that never reached calculation (status != found)
-         for shot in self.edit_shots:
-              if shot.lookup_status != 'found':
-                   unresolved_in_batches.add(shot)
+        def add_unique_shot(shot: EditShot):
+            """Adds the shot to the list if its identifier hasn't been seen."""
+            # Basic validation for required components
+            if not shot.edit_media_path:
+                logger.warning(f"Skipping shot with missing edit_media_path in add_unique_shot: {shot.clip_name}")
+                return
+            if not isinstance(shot.edit_media_range, opentime.TimeRange):
+                 logger.warning(f"Skipping shot with invalid edit_media_range type ({type(shot.edit_media_range)}) in add_unique_shot: {shot.clip_name}")
+                 return
+            # Further check if time components are valid RationalTime
+            if not isinstance(shot.edit_media_range.start_time, opentime.RationalTime) or \
+               not isinstance(shot.edit_media_range.duration, opentime.RationalTime):
+                 logger.warning(f"Skipping shot with invalid time components in edit_media_range in add_unique_shot: {shot.clip_name}")
+                 return
 
-         summary = []
-         # Sort for consistent display? Maybe by edit media path?
-         sorted_unresolved = sorted(list(unresolved_in_batches), key=lambda s: s.edit_media_path)
-         for shot in sorted_unresolved:
-              summary.append({
-                 "name": shot.clip_name or os.path.basename(shot.edit_media_path),
-                 "proxy_path": shot.edit_media_path,
-                 "status": shot.lookup_status, # Show the actual status
-                 "edit_range": str(shot.edit_media_range) if shot.edit_media_range else "N/A", })
-         return summary
+            # Create a unique, hashable identifier using TimeRange components
+            try:
+                tr = shot.edit_media_range
+                # Convert components to float for consistent hashing
+                identifier = (
+                    shot.edit_media_path, # String (hashable)
+                    float(tr.start_time.value), # Float (hashable)
+                    float(tr.start_time.rate),  # Float (hashable)
+                    float(tr.duration.value), # Float (hashable)
+                    float(tr.duration.rate)   # Float (hashable)
+                )
+            except Exception as e:
+                 # Catch potential errors during value/rate access or float conversion
+                 logger.error(f"Failed to create identifier for shot {shot.clip_name or shot.edit_media_path}: {e}", exc_info=True)
+                 return # Skip adding this shot if identifier creation fails
+
+            # Check if this identifier tuple has been seen
+            if identifier not in seen_identifiers:
+                seen_identifiers.add(identifier)
+                unresolved_shots_list.append(shot) # Add the actual shot object to the list
+
+        # --- Gather Shots ---
+        processed_batches = []
+        if self.color_transfer_batch and self.color_transfer_batch.unresolved_shots:
+            processed_batches.append(self.color_transfer_batch.unresolved_shots)
+        if self.online_transfer_batch and self.online_transfer_batch.unresolved_shots:
+             processed_batches.append(self.online_transfer_batch.unresolved_shots)
+
+        # Process shots from batches
+        for batch_unresolved in processed_batches:
+            for shot in batch_unresolved:
+                if isinstance(shot, EditShot):
+                    add_unique_shot(shot)
+                else:
+                    logger.warning(f"Invalid item found in batch unresolved_shots: {type(shot)}")
+
+        # Process shots from the main list that failed lookup
+        for shot in self.edit_shots:
+             if shot.lookup_status != 'found':
+                  add_unique_shot(shot)
+
+        # --- Create Summary ---
+        summary = []
+        try:
+            # Sort by edit media path, providing an empty string fallback if path is None
+            sorted_unresolved = sorted(unresolved_shots_list, key=lambda s: s.edit_media_path or "")
+        except Exception as sort_err:
+             logger.warning(f"Could not sort unresolved shots, using original order. Error: {sort_err}")
+             sorted_unresolved = unresolved_shots_list # Use unsorted list on error
+
+        for shot in sorted_unresolved:
+             edit_path_basename = os.path.basename(shot.edit_media_path or "") or "N/A"
+             summary.append({
+                "name": shot.clip_name or edit_path_basename,
+                "proxy_path": shot.edit_media_path or "N/A",
+                "status": shot.lookup_status,
+                "edit_range": str(shot.edit_media_range) if shot.edit_media_range else "N/A",
+             })
+        return summary

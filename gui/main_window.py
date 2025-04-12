@@ -11,7 +11,7 @@ import logging
 import os
 from typing import List, Optional, Dict
 
-from PyQt5.QtCore import QSettings, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QSettings, QThread, pyqtSignal, pyqtSlot, Qt
 # --- PyQt5 Imports ---
 from PyQt5.QtWidgets import (
     QMainWindow, QAction, QFileDialog, QMessageBox, QVBoxLayout,
@@ -256,8 +256,8 @@ class MainWindow(QMainWindow):
         self.action_calculate_online.triggered.connect(self.start_calculate_online_task)
         self.action_transcode.triggered.connect(self.start_transcode_task)
 
-        # Connect signals from ProjectPanel -> mark dirty
-        self.project_panel.editFilesChanged.connect(self.on_project_panel_changed)
+        # Connect signals from ProjectPanel -> mark dirty AND update UI state
+        self.project_panel.editFilesChanged.connect(self.on_project_panel_changed) # <<< FIXED: Added this connection
         self.project_panel.originalSourcePathsChanged.connect(self.on_project_panel_changed)
         self.project_panel.gradedSourcePathsChanged.connect(self.on_project_panel_changed)
 
@@ -290,10 +290,11 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(list)
     def on_project_panel_changed(self, new_paths: list):
-         """Handle path list changes from ProjectPanel - mark project dirty."""
-         # Syncing paths to harvester happens before processing, just mark dirty
-         logger.debug("Project panel change detected, marking project dirty.")
+         """Handle path list changes from ProjectPanel - mark project dirty and update UI state."""
+         # Syncing paths to harvester happens before processing, just mark dirty and update UI
+         logger.debug("Project panel change detected, marking project dirty and updating UI state.")
          self.mark_project_dirty()
+         self._update_ui_state() # <<< FIXED: Added call to update UI state
 
     @pyqtSlot(bool)
     def update_window_title(self, is_dirty: bool):
@@ -326,8 +327,6 @@ class MainWindow(QMainWindow):
             return False # User cancelled the operation
 
     # --- Project Actions Implementation ---
-
-        # --- Project Actions Implementation ---
     @pyqtSlot()
     def new_project(self, confirm_save=True):
         """Clears state and starts a new project, optionally prompting to save."""
@@ -564,7 +563,8 @@ class MainWindow(QMainWindow):
     # --- UI State Management ---
     def _update_ui_initial_state(self):
         """Sets the initial enabled state after startup or new project."""
-        self.mark_project_dirty(False) # Start clean
+        self.is_project_dirty = False # Start clean
+        self.projectDirtyStateChanged.emit(False)
         self._update_ui_state()
 
     def _update_ui_state(self):
@@ -572,8 +572,12 @@ class MainWindow(QMainWindow):
         is_busy = self.worker_thread is not None and self.worker_thread.isRunning()
         enabled = not is_busy
 
-        # Get logical state from harvester
-        files_loaded = bool(self.harvester.edit_files)
+        # Get logical state from UI panels (before potential sync) and harvester results
+        # Check UI panels directly for prerequisites of actions
+        files_loaded = bool(self.project_panel.get_edit_files()) if self.project_panel else False
+        sources_paths_set = bool(self.project_panel.get_original_search_paths()) if self.project_panel else False
+
+        # Check harvester results for dependent actions
         analysis_done = bool(self.harvester.edit_shots)
         sources_found = analysis_done and any(s.lookup_status == 'found' for s in self.harvester.edit_shots)
         color_plan_calculated = self.harvester.color_transfer_batch is not None and bool(self.harvester.color_transfer_batch.segments)
@@ -585,24 +589,26 @@ class MainWindow(QMainWindow):
         self.action_open_project.setEnabled(enabled)
         self.action_save_project.setEnabled(enabled and self.is_project_dirty)
         self.action_save_project_as.setEnabled(enabled)
-        self.action_analyze.setEnabled(enabled and files_loaded)
+        self.action_analyze.setEnabled(enabled and files_loaded and sources_paths_set) # <<< FIXED: Use panel state
         self.action_calculate_color.setEnabled(enabled and sources_found)
         self.action_export_for_color.setEnabled(enabled and color_plan_calculated)
-        self.action_calculate_online.setEnabled(enabled and can_calc_online)
-        self.action_transcode.setEnabled(enabled and online_plan_calculated)
+        self.action_calculate_online.setEnabled(enabled and can_calc_online) # Placeholder
+        self.action_transcode.setEnabled(enabled and online_plan_calculated) # Placeholder
 
-        # Delegate state updates to Tab Widgets
-        self.color_prep_tab.update_button_states(
-            can_analyze=enabled and files_loaded,
-            can_calculate=enabled and sources_found,
-            can_export=enabled and color_plan_calculated
-        )
-        self.online_prep_tab.update_button_states( # Update placeholder tab too
-            can_analyze=False, # Placeholder logic
-            can_calculate=enabled and can_calc_online,
-            can_transcode=enabled and online_plan_calculated
-        )
-        logger.debug(f"UI actions/buttons state updated (Busy: {is_busy})")
+        # Delegate state updates to Tab Widgets (ensure they exist)
+        if self.color_prep_tab:
+            self.color_prep_tab.update_button_states(
+                can_analyze=enabled and files_loaded and sources_paths_set, # <<< FIXED: Use panel state
+                can_calculate=enabled and sources_found,
+                can_export=enabled and color_plan_calculated
+            )
+        if self.online_prep_tab:
+            self.online_prep_tab.update_button_states( # Update placeholder tab too
+                can_analyze=False, # Placeholder logic
+                can_calculate=enabled and can_calc_online, # Placeholder
+                can_transcode=enabled and online_plan_calculated # Placeholder
+            )
+        logger.debug(f"UI actions/buttons state updated (Busy: {is_busy}, Files: {files_loaded}, Paths: {sources_paths_set}, Found: {sources_found}, ColorPlan: {color_plan_calculated})")
 
 
     def _is_worker_busy(self) -> bool:
@@ -617,36 +623,39 @@ class MainWindow(QMainWindow):
          logger.info("Updating UI from harvester state...")
          try:
              # 1. Update Project Panel
-             self.project_panel.set_edit_files([f.path for f in self.harvester.edit_files])
-             self.project_panel.set_original_search_paths(self.harvester.source_search_paths)
-             self.project_panel.set_graded_search_paths(self.harvester.graded_source_search_paths)
+             if self.project_panel:
+                 self.project_panel.set_edit_files([f.path for f in self.harvester.edit_files])
+                 self.project_panel.set_original_search_paths(self.harvester.source_search_paths)
+                 self.project_panel.set_graded_search_paths(self.harvester.graded_source_search_paths)
 
              # 2. Update Color Prep Tab
-             color_settings = {
-                 'color_prep_start_handles': self.harvester.color_prep_start_handles,
-                 'color_prep_end_handles': self.harvester.color_prep_end_handles,
-                 # Infer checkbox state based on whether handles are equal
-                 'color_prep_same_handles': self.harvester.color_prep_start_handles == self.harvester.color_prep_end_handles,
-                 'color_prep_separator': self.harvester.color_prep_separator,
-                 }
-             self.color_prep_tab.load_tab_settings(color_settings)
-             analysis_summary = self.harvester.get_edit_shots_summary()
-             self.color_prep_tab.results_widget.display_analysis_summary(analysis_summary)
-             color_plan_summary = self.harvester.get_transfer_segments_summary(stage='color')
-             self.color_prep_tab.results_widget.display_plan_summary(color_plan_summary)
-             unresolved_summary = self.harvester.get_unresolved_shots_summary()
-             self.color_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
+             if self.color_prep_tab:
+                 color_settings = {
+                     'color_prep_start_handles': self.harvester.color_prep_start_handles,
+                     'color_prep_end_handles': self.harvester.color_prep_end_handles,
+                     # Infer checkbox state based on whether handles are equal
+                     'color_prep_same_handles': self.harvester.color_prep_start_handles == self.harvester.color_prep_end_handles,
+                     'color_prep_separator': self.harvester.color_prep_separator,
+                     }
+                 self.color_prep_tab.load_tab_settings(color_settings)
+                 analysis_summary = self.harvester.get_edit_shots_summary()
+                 self.color_prep_tab.results_widget.display_analysis_summary(analysis_summary)
+                 color_plan_summary = self.harvester.get_transfer_segments_summary(stage='color')
+                 self.color_prep_tab.results_widget.display_plan_summary(color_plan_summary)
+                 unresolved_summary = self.harvester.get_unresolved_shots_summary()
+                 self.color_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
 
              # 3. Update Online Prep Tab (When implemented fully)
-             online_settings = {
-                 'online_prep_handles': self.harvester.online_prep_handles,
-                 'output_profiles': [p.__dict__ for p in self.harvester.output_profiles],
-                 'online_output_directory': self.harvester.online_output_directory,
-                 'online_target_resolution': self.harvester.online_target_resolution,
-                 'online_analyze_transforms': self.harvester.online_analyze_transforms
-             }
-             self.online_prep_tab.load_tab_settings(online_settings)
-             # TODO: Update online results display
+             if self.online_prep_tab:
+                 online_settings = {
+                     'online_prep_handles': self.harvester.online_prep_handles,
+                     'output_profiles': [p.__dict__ for p in self.harvester.output_profiles],
+                     'online_output_directory': self.harvester.online_output_directory,
+                     'online_target_resolution': self.harvester.online_target_resolution,
+                     'online_analyze_transforms': self.harvester.online_analyze_transforms
+                 }
+                 self.online_prep_tab.load_tab_settings(online_settings)
+                 # TODO: Update online results display
 
              # 4. Update overall UI state and window title
              self._update_ui_state()
@@ -660,14 +669,19 @@ class MainWindow(QMainWindow):
     def _sync_ui_to_harvester(self) -> bool:
         """Gathers current settings from UI panels and updates harvester's config attributes."""
         logger.debug("Syncing UI settings to harvester state...")
+        if not self.project_panel or not self.color_prep_tab or not self.online_prep_tab:
+             logger.error("Cannot sync UI to harvester: UI panels not initialized.")
+             return False
         try:
              # Project Panel -> Harvester config
              proj_panel_settings = self.project_panel.get_panel_settings()
              # Update harvester's list of file paths (don't recreate EditFileMetadata objects here)
              self.harvester.edit_files = [EditFileMetadata(p) for p in proj_panel_settings.get("edit_files",[])]
-             self.harvester.source_search_paths = proj_panel_settings.get("original_search_paths", [])
-             self.harvester.graded_source_search_paths = proj_panel_settings.get("graded_search_paths", [])
+             # Use setters for paths and strategy to potentially trigger finder reset
+             self.harvester.set_source_search_paths(proj_panel_settings.get("original_search_paths", []))
+             self.harvester.set_graded_source_search_paths(proj_panel_settings.get("graded_search_paths", []))
              # TODO: Get strategy from Project Panel UI if added
+             # self.harvester.set_source_lookup_strategy(...)
 
              # Color Prep Tab -> Harvester config
              color_settings = self.color_prep_tab.get_tab_settings()
@@ -699,10 +713,15 @@ class MainWindow(QMainWindow):
         if self._is_worker_busy(): return
         if not self._sync_ui_to_harvester(): return # Sync first
 
-        if not self.harvester.edit_files: QMessageBox.warning(self, "No Files", "Add edit files first."); return
-        if not self.harvester.source_search_paths: QMessageBox.warning(self, "Config Missing", "Add Original Source Search Paths."); return
+        # Check prerequisites again after sync
+        if not self.harvester.edit_files:
+            QMessageBox.warning(self, "No Edit Files", "Please add edit files in the Project Panel.")
+            return
+        if not self.harvester.source_search_paths:
+            QMessageBox.warning(self, "Config Missing", "Please add Original Source Search Paths in the Project Panel.")
+            return
 
-        self._start_worker('analyze', "Analyzing files & finding sources...", {})
+        self._start_worker('analyze', "Analyzing files & finding sources...", {}) # Use the helper
         self.mark_project_dirty() # Analysis results change project state
 
     @pyqtSlot()
@@ -716,7 +735,7 @@ class MainWindow(QMainWindow):
             return
 
         params = {'stage': 'color'} # Harvester uses its internal state for handles
-        self._start_worker('create_plan', "Calculating segments for color prep...", params)
+        self._start_worker('create_plan', "Calculating segments for color prep...", params) # Use the helper
         self.mark_project_dirty()
 
     @pyqtSlot()
@@ -734,7 +753,7 @@ class MainWindow(QMainWindow):
         # Get separator value from harvester state (synced from UI)
         separator_frames = self.harvester.color_prep_separator
 
-        # ... (File dialog logic as before) ...
+        # --- File Dialog ---
         proj_name_part = self.harvester.project_name or os.path.splitext(os.path.basename(self.current_project_path or "Untitled"))[0] or "ColorTransfer"
         default_filename = f"{proj_name_part}_ColorPrep.edl"
         start_dir = self.last_export_dir or os.path.dirname(self.current_project_path or os.path.expanduser("~"))
@@ -788,33 +807,69 @@ class MainWindow(QMainWindow):
         if not self._sync_ui_to_harvester(): return # Sync settings like profiles/output dir
 
         batch_to_run = self.harvester.online_transfer_batch
-        if not batch_to_run or not batch_to_run.segments: QMessageBox.warning(self, "No Plan", "Calculate the ONLINE plan first."); return
-        if not batch_to_run.output_directory or not os.path.isdir(batch_to_run.output_directory): QMessageBox.critical(self, "Config Error", "Online output directory invalid."); return
-        if not batch_to_run.output_profiles_used: QMessageBox.warning(self, "Config Missing", "No output profiles for online."); return
+        if not batch_to_run or not batch_to_run.segments:
+            QMessageBox.warning(self, "No Plan", "Calculate the ONLINE transfer plan first.")
+            return
+        if not batch_to_run.output_directory or not os.path.isdir(batch_to_run.output_directory):
+            QMessageBox.critical(self, "Config Error", "Online output directory is invalid or not set.\nPlease configure it in the 'Online Prep' tab.")
+            return
+        if not batch_to_run.output_profiles_used:
+            QMessageBox.warning(self, "Config Missing", "No output profiles are defined for the online batch.\nPlease configure them in the 'Online Prep' tab.")
+            return
 
-        # ... (Confirmation dialog as before) ...
+        # --- Confirmation dialog ---
         segment_count = len(batch_to_run.segments)
         profile_count = len(batch_to_run.output_profiles_used)
-        total_files = segment_count * profile_count
+        total_files = segment_count * profile_count # This might be inaccurate if segments fail early
         output_dir = batch_to_run.output_directory
-        reply = QMessageBox.question(self,"Confirm Transcode", f"Start transcoding {total_files} file(s) for online?", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox.question(self,"Confirm Transcode",
+             f"This will start transcoding approximately {total_files} file(s) "
+             f"using the online preparation plan.\n\n"
+             f"Output Directory:\n{output_dir}\n\n"
+             "Proceed?",
+             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self._start_worker('transcode', f"Starting online transcoding ({total_files} files)...", {'stage': 'online'})
+            self._start_worker('transcode', f"Starting online transcoding ({total_files} potential files)...", {'stage': 'online'}) # Use the helper
         else:
             self.status_manager.set_status("Online transcoding cancelled.")
 
+
+    # --- Worker Thread Management ---
+
+    def _start_worker(self, task_name: str, busy_message: str, params: Optional[Dict] = None):
+        """Creates, configures, and starts the WorkerThread for a given task."""
+        if self.worker_thread and self.worker_thread.isRunning():
+            logger.warning(f"Attempted to start task '{task_name}' while another is running.")
+            QMessageBox.warning(self, "Busy", "Another background task is already running.")
+            return
+
+        logger.info(f"Starting worker thread for task: {task_name}")
+        self.status_manager.set_busy(True, busy_message)
+        self.worker_thread = WorkerThread(self.harvester, task_name, params)
+
+        # Connect signals from the thread to slots in MainWindow
+        self.worker_thread.analysis_finished.connect(self.on_analysis_complete)
+        self.worker_thread.plan_finished.connect(self.on_plan_complete)
+        self.worker_thread.transcode_finished.connect(self.on_transcode_complete)
+        self.worker_thread.progress_update.connect(self.on_progress_update)
+        self.worker_thread.error_occurred.connect(self.on_task_error)
+        self.worker_thread.finished.connect(self.on_task_finished) # Crucial for cleanup
+
+        self.worker_thread.start()
+        self._update_ui_state() # Disable UI elements while worker runs
 
     # --- Slots Handling Worker Thread Signals ---
     @pyqtSlot(list)
     def on_analysis_complete(self, analysis_summary: List[Dict]):
         """Handles successful completion of the 'analyze' task."""
         # Update results in the appropriate tab's display widget
-        self.color_prep_tab.results_widget.display_analysis_summary(analysis_summary)
-        unresolved_summary = [s for s in analysis_summary if s['status'] != 'found']
-        self.color_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
+        if self.color_prep_tab:
+            self.color_prep_tab.results_widget.display_analysis_summary(analysis_summary)
+            unresolved_summary = self.harvester.get_unresolved_shots_summary() # Get latest from harvester
+            self.color_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
         # TODO: Also update online_prep_tab results if needed
-        found_count = len(analysis_summary) - len(unresolved_summary)
-        logger.info(f"Analysis task completed signal received. Found: {found_count}/{len(analysis_summary)}")
+        found_count = len(analysis_summary) - len(unresolved_summary) if analysis_summary else 0
+        logger.info(f"Analysis task completed signal received. Shots processed: {len(analysis_summary)}. Found: {found_count}")
         # Actual UI state update happens in on_task_finished
 
     @pyqtSlot(list, str) # Added stage argument
@@ -823,10 +878,10 @@ class MainWindow(QMainWindow):
         logger.info(f"Plan calculation for stage '{stage}' completed signal received. Segments: {len(plan_summary)}")
         unresolved_summary = self.harvester.get_unresolved_shots_summary() # Get latest unresolved
         # Update the correct tab
-        if stage == 'color':
+        if stage == 'color' and self.color_prep_tab:
             self.color_prep_tab.results_widget.display_plan_summary(plan_summary)
             self.color_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
-        elif stage == 'online':
+        elif stage == 'online' and self.online_prep_tab:
              # TODO: Update online tab results
              # self.online_prep_tab.results_widget.display_plan_summary(plan_summary)
              # self.online_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
@@ -841,8 +896,9 @@ class MainWindow(QMainWindow):
             self.status_manager.set_status(message, temporary=False)
             QMessageBox.information(self, "Transcoding Complete", message)
         else:
+            # Error should already be logged by runner, message contains summary
             self.status_manager.set_status(f"Transcoding Failed: {message}", temporary=False)
-            QMessageBox.critical(self, "Transcoding Failed", message)
+            QMessageBox.critical(self, "Transcoding Failed", f"Transcoding process failed.\nCheck logs for details.\n\nError summary: {message}")
         # TODO: Update status display in Online Prep Tab results
         # Actual UI state update happens in on_task_finished
 
@@ -862,16 +918,20 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def on_task_finished(self):
         """Called ALWAYS after worker finishes. Cleans up and re-enables UI."""
-        # ... (Implementation as before: hide progress, set status, update UI state, clear thread ref) ...
         logger.info("Worker thread finished signal received. Cleaning up.")
         self.status_manager.hide_progress()
+        # Check if status wasn't already set to a final state (error/success)
         current_status = self.status_manager.status_label.text()
         final_prefixes = ["Error:", "Failed:", "Completed", "cancelled", "complete", "exported", "Analysis complete", "Plan calculated", "Project saved", "Project loaded", "Task '"]
-        if not any(current_status.startswith(prefix) for prefix in final_prefixes):
-             self.status_manager.set_status("Ready.")
+        is_final_status = any(current_status.startswith(prefix) for prefix in final_prefixes) or "cancelled" in current_status.lower()
+
+        if not is_final_status:
+             self.status_manager.set_status("Ready.") # Set "Ready" only if no specific result was shown
+
+        self.worker_thread = None # <<< IMPORTANT: Clear the thread reference
         self._update_ui_state() # Re-enable/disable based on current state
-        self.worker_thread = None
         logger.info("Worker thread cleanup and UI state update complete.")
+
 
     # --- About Dialog ---
     def show_about_dialog(self):

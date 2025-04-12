@@ -10,9 +10,7 @@ Handles finding bundled executables.
 import json
 import logging
 import os
-import shutil  # For shutil.which (fallback PATH search)
 import subprocess
-import sys  # Needed for sys.frozen and sys._MEIPASS
 from typing import List, Optional, Dict
 
 from opentimelineio import opentime  # Explicit import for time objects
@@ -20,91 +18,13 @@ from opentimelineio import opentime  # Explicit import for time objects
 # Import necessary models
 from .models import EditShot, OriginalSourceFile
 
+# Import the consolidated executable finder from utils
+from utils import find_executable
+
 # Note: time_utils are not directly used here anymore, but handle_utils might be needed by calculator
 # from utils import time_utils
 
 logger = logging.getLogger(__name__)  # Use module-specific logger
-
-
-# --- Robust Executable Finder (Consider moving to utils.executable_finder later) ---
-def find_executable(name: str) -> Optional[str]:
-    """
-    Attempts to find an executable (e.g., "ffmpeg", "ffprobe") robustly.
-    1. Checks if running as a bundled app (PyInstaller) and looks inside.
-    2. Checks for a conventional subfolder (e.g., 'ffmpeg_bin') relative to the script/bundle.
-    3. Falls back to checking the system PATH.
-
-    Args:
-        name: Name of the executable (without .exe on Windows).
-
-    Returns:
-        Absolute path to the executable or None if not found.
-    """
-    executable_name = f"{name}.exe" if os.name == 'nt' else name
-    found_path = None
-    bundle_dir = None
-
-    # --- 1. Check if bundled (PyInstaller) ---
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        bundle_dir = sys._MEIPASS
-        logger.debug(f"Running bundled, checking base bundle dir: {bundle_dir}")
-        exe_path = os.path.join(bundle_dir, executable_name)
-        if os.path.exists(exe_path):
-            found_path = exe_path
-        else:
-            # Check common subdirectories within the bundle
-            for subfolder in ['bin', 'ffmpeg_bin', 'lib', '.']:  # Added '.' just in case
-                exe_path = os.path.join(bundle_dir, subfolder, executable_name)
-                if os.path.exists(exe_path):
-                    found_path = exe_path
-                    logger.info(f"Found bundled '{name}' in subfolder '{subfolder}'.")
-                    break  # Stop after first find
-            if not found_path:
-                logger.warning(
-                    f"'{executable_name}' not found directly in PyInstaller bundle directory: {bundle_dir} or common subfolders.")
-                # Fallback to PATH check even when bundled? Generally safer not to.
-                # found_path = shutil.which(name)
-
-    # --- 2. Check conventional subfolder relative to script/bundle (if not found yet) ---
-    if not found_path:
-        # Determine base directory more reliably
-        if getattr(sys, 'frozen', False):
-            # Base is bundle directory if bundled
-            base_dir = bundle_dir or os.path.dirname(sys.executable)  # Fallback for safety
-        else:
-            # Base is directory of the main script being run (main.py)
-            try:
-                # Find the directory containing the script that was initially executed
-                base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            except:
-                # Fallback if sys.argv[0] is weird
-                base_dir = os.path.dirname(os.path.abspath(__file__))  # Fallback to utils dir? Risky.
-                base_dir = os.path.dirname(base_dir)  # Go up one level to project root likely
-
-        relative_subfolder = "ffmpeg_bin"  # Conventional name for local binaries
-        exe_path = os.path.join(base_dir, relative_subfolder, executable_name)
-        logger.debug(f"Checking relative conventional subfolder: {exe_path}")
-        if os.path.exists(exe_path):
-            found_path = exe_path
-            logger.info(f"Found '{name}' in relative subfolder '{relative_subfolder}'.")
-
-    # --- 3. Fallback to system PATH ---
-    if not found_path:
-        logger.debug(f"'{name}' not found in bundle or relative subfolder, checking system PATH.")
-        exe_path = shutil.which(name)
-        if exe_path:
-            found_path = exe_path
-            logger.info(f"Found '{name}' executable in system PATH.")
-        else:
-            logger.error(
-                f"Executable '{name}' could not be located in bundle, relative subfolder ('{relative_subfolder}'), or system PATH.")
-            return None
-
-    # Return the absolute path
-    abs_found_path = os.path.abspath(found_path)
-    logger.debug(f"'{name}' final path determined as: {abs_found_path}")
-    return abs_found_path
-
 
 # --- SourceFinder Class ---
 class SourceFinder:
@@ -133,7 +53,7 @@ class SourceFinder:
         self.strategy = strategy
         # Cache verified sources {absolute_path: OriginalSourceFile}
         self.verified_cache: Dict[str, OriginalSourceFile] = {}
-        # Find ffprobe executable path once during initialization
+        # Find ffprobe executable path once during initialization using the imported function
         self.ffprobe_path = find_executable("ffprobe")
 
         if not self.search_paths:
