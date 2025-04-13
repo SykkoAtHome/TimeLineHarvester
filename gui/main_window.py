@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # gui/main_window.py
 """
 Main Window Module - Uses TimelineHarvesterFacade
@@ -10,7 +9,7 @@ and UI updates. Connects UI actions to the Facade.
 
 import logging
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 
 from PyQt5.QtCore import QSettings, QThread, pyqtSignal, pyqtSlot, Qt, QCoreApplication
 from PyQt5.QtWidgets import (
@@ -48,10 +47,12 @@ class WorkerThread(QThread):
         logger.info(f"WorkerThread initialized for task: {self.task}")
 
     def stop(self):
+        """Signal the thread to stop."""
         self._is_running = False
         logger.info(f"Stop requested for worker thread task: {self.task}")
 
     def run(self):
+        """Execute the thread's task."""
         logger.info(f"WorkerThread starting task: {self.task}")
         try:
             if self.task == 'analyze':
@@ -125,7 +126,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self, harvester_facade: TimelineHarvesterFacade):
         super().__init__()
+        # Store facade reference
         self.harvester = harvester_facade
+
+        # Initialize worker thread and UI components to None
         self.worker_thread = None
         self.project_panel = None
         self.tab_widget = None
@@ -138,15 +142,40 @@ class MainWindow(QMainWindow):
         self.last_edit_file_dir = os.path.expanduser("~")
         self.last_export_dir = os.path.expanduser("~")
 
+        # Initialize all action objects
+        self.action_new_project = None
+        self.action_open_project = None
+        self.action_save_project = None
+        self.action_save_project_as = None
+        self.action_exit = None
+        self.action_analyze = None
+        self.action_calculate_color = None
+        self.action_export_for_color = None
+        self.action_calculate_online = None
+        self.action_transcode = None
+        self.action_about = None
+
+        # Initialize menu objects
+        self.file_menu = None
+        self.process_menu = None
+        self.help_menu = None
+
+        # Initialize toolbar
+        self.toolbar = None
+
+        # Set initial window properties
         self.setWindowTitle("TimelineHarvester")
         self.setMinimumSize(1200, 800)
+
+        # Initialize UI components
         self.init_ui()
         self.create_actions()
         self.create_menus()
         self.create_toolbar()
         self.connect_signals()
         self.load_settings()
-        # Create a new project on startup using the facade method
+
+        # Create a new project on startup
         self.new_project(confirm_save=False)
         logger.info("MainWindow initialized with Facade")
 
@@ -172,27 +201,55 @@ class MainWindow(QMainWindow):
 
     def create_actions(self):
         """Creates QAction objects for menus and toolbars."""
-        self.action_new_project = QAction("&New Project", self, shortcut="Ctrl+N", statusTip="Create a new project")
-        self.action_open_project = QAction("&Open Project...", self, shortcut="Ctrl+O",
-                                           statusTip="Open an existing project file (.thp)")
-        self.action_save_project = QAction("&Save Project", self, shortcut="Ctrl+S",
-                                           statusTip="Save the current project", enabled=False)
-        self.action_save_project_as = QAction("Save Project &As...", self,
-                                              statusTip="Save the current project to a new file")
-        self.action_exit = QAction("E&xit", self, shortcut="Ctrl+Q", statusTip="Exit the application")
+        # Create actions with parent properly set
+        self.action_new_project = QAction("&New Project", self)
+        self.action_new_project.setShortcut("Ctrl+N")
+        self.action_new_project.setStatusTip("Create a new project")
+
+        self.action_open_project = QAction("&Open Project...", self)
+        self.action_open_project.setShortcut("Ctrl+O")
+        self.action_open_project.setStatusTip("Open an existing project file (.thp)")
+
+        self.action_save_project = QAction("&Save Project", self)
+        self.action_save_project.setShortcut("Ctrl+S")
+        self.action_save_project.setStatusTip("Save the current project")
+        self.action_save_project.setEnabled(False)
+
+        self.action_save_project_as = QAction("Save Project &As...", self)
+        self.action_save_project_as.setStatusTip("Save the current project to a new file")
+
+        self.action_exit = QAction("E&xit", self)
+        self.action_exit.setShortcut("Ctrl+Q")
+        self.action_exit.setStatusTip("Exit the application")
 
         # Process actions
-        self.action_analyze = QAction("&Analyze Sources", self, shortcut="F5",
-                                      statusTip="Parse edit files and find original sources", enabled=False)
-        self.action_calculate_color = QAction("&Calculate for Color", self, shortcut="F6",
-                                              statusTip="Calculate segments needed for color grading", enabled=False)
-        self.action_export_for_color = QAction("Export EDL/XML for Color...", self,
-                                               statusTip="Export list for color grading", enabled=False)
-        self.action_calculate_online = QAction("Calculate for &Online", self, shortcut="F7",
-                                               statusTip="Calculate segments needed for online", enabled=False)
-        self.action_transcode = QAction("&Transcode for Online", self, shortcut="F8",
-                                        statusTip="Transcode calculated segments for online", enabled=False)
-        self.action_about = QAction("&About TimelineHarvester", self, statusTip="Show application information")
+        self.action_analyze = QAction("&Analyze Sources", self)
+        self.action_analyze.setShortcut("F5")
+        self.action_analyze.setStatusTip("Parse edit files and find original sources")
+        self.action_analyze.setEnabled(False)
+
+        self.action_calculate_color = QAction("&Calculate for Color", self)
+        self.action_calculate_color.setShortcut("F6")
+        self.action_calculate_color.setStatusTip("Calculate segments needed for color grading")
+        self.action_calculate_color.setEnabled(False)
+
+        self.action_export_for_color = QAction("Export EDL/XML for Color...", self)
+        self.action_export_for_color.setStatusTip("Export list for color grading")
+        self.action_export_for_color.setEnabled(False)
+
+        self.action_calculate_online = QAction("Calculate for &Online", self)
+        self.action_calculate_online.setShortcut("F7")
+        self.action_calculate_online.setStatusTip("Calculate segments needed for online")
+        self.action_calculate_online.setEnabled(False)
+
+        self.action_transcode = QAction("&Transcode for Online", self)
+        self.action_transcode.setShortcut("F8")
+        self.action_transcode.setStatusTip("Transcode calculated segments for online")
+        self.action_transcode.setEnabled(False)
+
+        self.action_about = QAction("&About TimelineHarvester", self)
+        self.action_about.setStatusTip("Show application information")
+
         logger.debug("UI Actions created")
 
     def create_menus(self):
@@ -310,7 +367,6 @@ class MainWindow(QMainWindow):
     def on_online_settings_changed(self):
         """Handles changes to online prep settings."""
         logger.debug("Online Prep settings changed in UI")
-        settings = self.online_prep_tab.get_tab_settings()
         self._update_ui_state()
         self.update_window_title()
 
@@ -479,8 +535,6 @@ class MainWindow(QMainWindow):
         settings.setValue("last_export_dir", self.last_export_dir)
         logger.info("Window state and last directories saved")
 
-    # --- Window Event Handlers ---
-
     def closeEvent(self, event):
         """Handles window close event."""
         logger.debug("Close event triggered")
@@ -575,7 +629,7 @@ class MainWindow(QMainWindow):
                 }
                 self.color_prep_tab.load_tab_settings(color_settings)
 
-                # Refresh results display using facade getter methods
+                # Refresh results display
                 analysis_summary = self.harvester.get_edit_shots_summary()
                 self.color_prep_tab.results_widget.display_analysis_summary(analysis_summary)
                 color_plan_summary = self.harvester.get_transfer_segments_summary(stage='color')
@@ -583,18 +637,18 @@ class MainWindow(QMainWindow):
                 unresolved_summary = self.harvester.get_unresolved_shots_summary()
                 self.color_prep_tab.results_widget.display_unresolved_summary(unresolved_summary)
 
-            # Update Online Prep Tab
-            if self.online_prep_tab:
-                online_settings = {
-                    'online_prep_handles': state.settings.online_prep_handles,
-                    'output_profiles': [p.__dict__ for p in state.settings.output_profiles],
-                    'online_output_directory': state.settings.online_output_directory,
-                }
-                self.online_prep_tab.load_tab_settings(online_settings)
+                # Update Online Prep Tab
+                if self.online_prep_tab:
+                    online_settings = {
+                        'online_prep_handles': state.settings.online_prep_handles,
+                        'output_profiles': [p.__dict__ for p in state.settings.output_profiles],
+                        'online_output_directory': state.settings.online_output_directory,
+                    }
+                    self.online_prep_tab.load_tab_settings(online_settings)
 
-            self.update_window_title()
-            self._update_ui_state()
-            logger.info("UI refreshed from facade state")
+                self.update_window_title()
+                self._update_ui_state()
+                logger.info("UI refreshed from facade state")
         except Exception as e:
             logger.error(f"Error updating UI from facade state: {e}", exc_info=True)
             QMessageBox.critical(self, "UI Update Error", f"Failed to refresh UI from project state:\n{e}")
@@ -612,7 +666,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No Edit Files", "Please add edit files to the list.")
             return
         if not state.settings.source_search_paths:
-            QMessageBox.warning(self, "Config Missing", "Please add Original Source search paths in the Project Panel.")
+            QMessageBox.warning(self, "Config Missing",
+                                "Please add Original Source search paths in the Project Panel.")
             return
 
         self._start_worker('analyze', "Analyzing files & finding sources...", {})
@@ -805,9 +860,6 @@ class MainWindow(QMainWindow):
         """Handles completion of the transcode task."""
         logger.info(f"Transcode complete. Success: {success}, Message: {message}")
 
-        # Update segment statuses in the UI based on the final state
-        online_plan_summary = self.harvester.get_transfer_segments_summary(stage='online')
-
         if success:
             self.status_manager.set_status(message, temporary=False)
             QMessageBox.information(self, "Transcoding Complete", message)
@@ -851,13 +903,8 @@ class MainWindow(QMainWindow):
         logger.debug("Refreshing results display widgets...")
         try:
             # Use facade methods to get fresh summary data
-            # Get the time format from UI if applicable, but don't pass it to the facade
-            time_disp_format = self.color_prep_tab.results_widget.time_format_combo.currentText() if self.color_prep_tab else "Timecode"
-
-            # Remove the time_format parameter as it's not supported by the facade method
             analysis_summary = self.harvester.get_edit_shots_summary()
             color_plan_summary = self.harvester.get_transfer_segments_summary(stage='color')
-            online_plan_summary = self.harvester.get_transfer_segments_summary(stage='online')
             unresolved_summary = self.harvester.get_unresolved_shots_summary()
 
             if self.color_prep_tab:
