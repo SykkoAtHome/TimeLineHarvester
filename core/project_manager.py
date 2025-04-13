@@ -110,7 +110,7 @@ class ProjectManager:
                         logger.warning(f"Skipping invalid output profile data during load: {p_data}, Error: {e}")
         settings.output_profiles = loaded_profiles
 
-        settings.color_prep_start_handles = config_data.get("color_prep_start_handles", 24)
+        settings.color_prep_start_handles = config_data.get("color_prep_start_handles", 25)
         settings.color_prep_end_handles = config_data.get("color_prep_end_handles", settings.color_prep_start_handles)
         settings.color_prep_separator = config_data.get("color_prep_separator", 0)
         settings.split_gap_threshold_frames = config_data.get("split_gap_threshold_frames", -1)

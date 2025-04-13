@@ -49,7 +49,7 @@ class ColorPrepTabWidget(QWidget):
 
         # --- Handle Frames Settings ---
         start_handle_layout = QHBoxLayout()
-        self.start_handles_spin = QSpinBox(minimum=0, maximum=10000, value=24)  # Removed suffix for cleaner get/set
+        self.start_handles_spin = QSpinBox(minimum=0, maximum=10000, value=25)  # Removed suffix for cleaner get/set
         self.start_handles_spin.setToolTip("Frames added before each segment")
         self.start_handles_spin.setFixedWidth(100)
         start_handle_layout.addWidget(self.start_handles_spin)
@@ -58,7 +58,7 @@ class ColorPrepTabWidget(QWidget):
         settings_form_layout.addRow("Start Handles:", start_handle_layout)
 
         end_handle_layout = QHBoxLayout()
-        self.end_handles_spin = QSpinBox(minimum=0, maximum=10000, value=24, enabled=False)
+        self.end_handles_spin = QSpinBox(minimum=0, maximum=10000, value=25, enabled=False)
         self.end_handles_spin.setToolTip("Frames added after each segment")
         self.end_handles_spin.setFixedWidth(100)
         end_handle_layout.addWidget(self.end_handles_spin)
@@ -182,7 +182,7 @@ class ColorPrepTabWidget(QWidget):
 
     def clear_tab(self):
         """Resets the tab settings and clears results."""
-        self.start_handles_spin.setValue(24)
+        self.start_handles_spin.setValue(25)
         self.same_handles_check.setChecked(True)
         self.separator_spin.setValue(0)
         self.split_gap_spin.setValue(-1)  # Reset threshold
@@ -201,7 +201,7 @@ class ColorPrepTabWidget(QWidget):
 
     def load_tab_settings(self, settings: Dict):
         """Loads settings specific to this tab from a dictionary."""
-        self.start_handles_spin.setValue(settings.get('color_prep_start_handles', 24))
+        self.start_handles_spin.setValue(settings.get('color_prep_start_handles', 25))
         same = settings.get('color_prep_same_handles', True)
         self.same_handles_check.setChecked(same)
         # Set end value correctly based on checkbox state after loading

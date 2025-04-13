@@ -45,8 +45,8 @@ class ProjectSettings:
     graded_source_search_paths: List[str] = field(default_factory=list)
     source_lookup_strategy: str = "basic_name_match"
     output_profiles: List[OutputProfile] = field(default_factory=list)
-    color_prep_start_handles: int = 24
-    color_prep_end_handles: int = 24
+    color_prep_start_handles: int = 25
+    color_prep_end_handles: int = 25
     color_prep_separator: int = 0
     split_gap_threshold_frames: int = -1
     online_prep_handles: int = 12

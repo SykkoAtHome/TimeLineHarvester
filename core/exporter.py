@@ -84,7 +84,7 @@ def export_transfer_batch(
     # --- Create New OTIO Timeline ---
     export_timeline_name = timeline_name or transfer_batch.batch_name or f"{os.path.splitext(os.path.basename(abs_output_path))[0]}_Timeline"
     # Determine timeline rate reliably
-    timeline_rate = 24.0  # Default
+    timeline_rate = 25.0  # Default
     for segment in transfer_batch.segments:
         if segment.original_source and segment.original_source.frame_rate:
             timeline_rate = segment.original_source.frame_rate;

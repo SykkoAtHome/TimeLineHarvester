@@ -355,8 +355,8 @@ class MainWindow(QMainWindow):
         logger.debug("Color Prep settings changed in UI")
         settings = self.color_prep_tab.get_tab_settings()
         self.harvester.set_color_prep_handles(
-            settings.get('color_prep_start_handles', 24),
-            settings.get('color_prep_end_handles', 24)
+            settings.get('color_prep_start_handles', 25),
+            settings.get('color_prep_end_handles', 25)
         )
         self.harvester.set_color_prep_separator(settings.get('color_prep_separator', 0))
         self.harvester.set_split_gap_threshold(settings.get('split_gap_threshold_frames', -1))
