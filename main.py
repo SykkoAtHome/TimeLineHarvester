@@ -1,16 +1,16 @@
-# main.py - Test Dummy OTIO Import First (Corrected - Final)
+#!/usr/bin/env python3
+# main.py - Application entry point
 import sys
 import logging
 import os
 
-# --- Determine App Directory FIRST ---
+# Determine application directory
 if getattr(sys, 'frozen', False):
     app_dir = os.path.dirname(sys.executable)
 else:
     app_dir = os.path.dirname(os.path.abspath(__file__))
 
-# --- Logging Setup ---
-# Define log_file_path at the global scope
+# Configure logging
 log_file_path = os.path.join(app_dir, "timelineharvester.log")
 logging.basicConfig(
     level=logging.DEBUG,
@@ -20,91 +20,70 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger("DummyImportTest")
+logger = logging.getLogger("main")
 
 logger.info("-" * 50)
-logger.info("--- Testing Dummy OTIO Import First ---")
+logger.info("Starting TimelineHarvester application")
 logger.info(f"Python Version: {sys.version}")
 logger.info(f"App Directory: {app_dir}")
 logger.info(f"Logging to file: {log_file_path}")
 
-# --- DUMMY IMPORT OTIO FIRST ---
-otio_dummy_loaded = False
+# Import OpenTimelineIO first to ensure it's available
 try:
-    logger.info("Attempting DUMMY import of opentimelineio...")
+    logger.info("Importing opentimelineio...")
     import opentimelineio as otio
     from opentimelineio import opentime
 
-    _dummy_time = opentime.RationalTime(0, 25)  # Simple access test
-    logger.info(f"DUMMY import of opentimelineio successful. Version: {otio.__version__}")
-    otio_dummy_loaded = True
+    logger.info(f"OpenTimelineIO import successful. Version: {otio.__version__}")
 except Exception as e:
-    logger.critical(f"CRITICAL: DUMMY import of opentimelineio FAILED: {e}", exc_info=True)
+    logger.critical(f"CRITICAL: Failed to import OpenTimelineIO: {e}", exc_info=True)
     print(f"CRITICAL ERROR: Failed to load OpenTimelineIO. Cannot continue.", file=sys.stderr)
     sys.exit(1)  # Exit early if essential OTIO fails
 
-# --- Attempt to import PyQt5 SECOND ---
-pyqt_loaded = False
-pyqt_error_message = ""
+# Import PyQt5
 try:
-    logger.info("Attempting to import PyQt5...")
+    logger.info("Importing PyQt5...")
     from PyQt5.QtWidgets import QApplication, QMessageBox
     from PyQt5.QtCore import qVersion, QCoreApplication, Qt
 
     logger.info(f"PyQt5 imported successfully. Qt Version: {qVersion()}")
-    pyqt_loaded = True
 except ImportError as e:
-    logger.critical(f"CRITICAL: Failed to import PyQt5 (after dummy OTIO): {str(e)}", exc_info=True)
-    pyqt_error_message = f"Failed to import PyQt5: {str(e)}"
-    print(f"CRITICAL ERROR (PyQt5):\n{pyqt_error_message}", file=sys.stderr)
+    logger.critical(f"CRITICAL: Failed to import PyQt5: {str(e)}", exc_info=True)
+    print(f"CRITICAL ERROR: Failed to import PyQt5: {str(e)}", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    logger.critical(f"CRITICAL: Unexpected error during PyQt5 import (after dummy OTIO): {str(e)}", exc_info=True)
-    pyqt_error_message = f"Unexpected error during PyQt5 import: {str(e)}"
-    print(f"CRITICAL ERROR (PyQt5 during import):\n{pyqt_error_message}", file=sys.stderr)
+    logger.critical(f"CRITICAL: Unexpected error during PyQt5 import: {str(e)}", exc_info=True)
+    print(f"CRITICAL ERROR: PyQt5 import error: {str(e)}", file=sys.stderr)
     sys.exit(1)
 
-# --- Attempt to import Core Facade and GUI THIRD ---
-core_gui_loaded = False
-core_gui_error_message = ""
-# No need to check pyqt_loaded again, we exited if it failed
+# Import application modules
 try:
-    logger.info("Attempting to import Core Facade and GUI...")
+    logger.info("Importing application modules...")
     from core.timeline_harvester_facade import TimelineHarvesterFacade
     from gui.main_window import MainWindow
 
-    logger.info("Core Facade and GUI modules imported successfully.")
-    core_gui_loaded = True
+    logger.info("Application modules imported successfully.")
 except ImportError as e:
-    logger.critical(f"CRITICAL: Failed to import Core/GUI (after dummy OTIO): {str(e)}", exc_info=True)
-    core_gui_error_message = f"Failed to load application modules (Core/GUI): {str(e)}"
+    logger.critical(f"CRITICAL: Failed to import application modules: {str(e)}", exc_info=True)
+    error_message = f"Failed to load application modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
 except Exception as e:
-    logger.critical(f"CRITICAL: Unexpected error during Core/GUI import (after dummy OTIO): {str(e)}", exc_info=True)
-    core_gui_error_message = f"Unexpected error loading application modules: {str(e)}"
+    logger.critical(f"CRITICAL: Unexpected error during module import: {str(e)}", exc_info=True)
+    error_message = f"Unexpected error loading application modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
 
 
-# --- Main Application Function ---
 def main():
-    logger.info("Main function started.")
-    # Re-check imports for safety before proceeding
-    if not otio_dummy_loaded:
-        logger.error("Sanity Check Failed: OTIO initial load failed.")
-        print(f"INTERNAL ERROR: OTIO load state lost.", file=sys.stderr)
-        return 1
-    if not pyqt_loaded:
-        logger.error("Sanity Check Failed: PyQt5 not loaded.")
-        print(f"INTERNAL ERROR: PyQt5 load state lost.", file=sys.stderr)
-        return 1
-    if not core_gui_loaded:
-        logger.error("Core/GUI failed to load.")
-        try:
-            QMessageBox.critical(None, "Application Load Error", core_gui_error_message)
-        except Exception as msg_err:
-            print(f"CRITICAL ERROR (Core/GUI):\n{core_gui_error_message}", file=sys.stderr)
-            print(f"(Could not display GUI error message: {msg_err})", file=sys.stderr)
-        return 1
-
-    logger.info("All essential modules loaded successfully (with dummy OTIO import).")
+    """Main application entry point."""
+    logger.info("Main function started")
 
     # Set application attributes
     QCoreApplication.setOrganizationName("TimelineHarvesterOrg")
@@ -115,42 +94,40 @@ def main():
     app_instance = QApplication.instance() or QApplication(sys.argv)
 
     try:
-        logger.info("Initializing application components...")
-        # Instantiate the facade (it was already imported successfully)
+        # Initialize core components
         harvester_core = TimelineHarvesterFacade()
-        logger.info("Core Facade engine initialized.")
-        # Instantiate the main window (it was already imported successfully)
+        logger.info("Core Facade engine initialized")
+
+        # Create and show main window
         window = MainWindow(harvester_core)
-        logger.info("Main window created.")
+        logger.info("Main window created")
         window.show()
-        logger.info("Main window displayed. Starting event loop.")
+        logger.info("Main window displayed. Starting event loop")
+
+        # Start application event loop
         exit_code = app_instance.exec_()
         logger.info(f"Event loop finished. Exit code: {exit_code}")
         return exit_code
     except Exception as e:
         logger.critical(f"Unhandled runtime exception: {str(e)}", exc_info=True)
         try:
-            # Use the globally defined log_file_path
             QMessageBox.critical(None, "Critical Runtime Error",
                                  f"An unexpected error occurred:\n\n{str(e)}\n\n"
-                                 f"See log:\n{log_file_path}")  # Reference global variable
+                                 f"See log:\n{log_file_path}")
         except Exception as msg_err:
             print(f"CRITICAL RUNTIME ERROR: {e}. Cannot show GUI error message: {msg_err}", file=sys.stderr)
-            # Use the globally defined log_file_path
-            print(f"Log file: {log_file_path}", file=sys.stderr)  # Reference global variable
+            print(f"Log file: {log_file_path}", file=sys.stderr)
         return 1
 
 
-# --- Script Execution Guard ---
 if __name__ == "__main__":
-    logger.info("Script execution started.")
-    # Optional High DPI scaling attributes
+    # Configure high DPI scaling
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     exit_status = main()
-    logger.info(f"--- Application Exiting (Status: {exit_status}) ---")
+    logger.info(f"Application exiting with status: {exit_status}")
     logging.shutdown()
     sys.exit(exit_status)
