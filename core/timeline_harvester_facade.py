@@ -46,7 +46,8 @@ def format_time_for_display(value: Optional[opentime.RationalTime], rate: Option
         else:
             return str(value)
     except Exception as e:
-        logger.warning(f"Error formatting time {value} rate {current_rate}: {e}"); return f"Err ({value.value})"
+        logger.warning(f"Error formatting time {value} rate {current_rate}: {e}");
+        return f"Err ({value.value})"
 
 
 # --- Facade Class ---
@@ -257,7 +258,8 @@ class TimelineHarvesterFacade:
         """Sets the split gap threshold for color prep."""
         state = self.project_manager.get_state()
         try:
-            norm_thr = int(threshold_frames); norm_thr = -1 if norm_thr < -1 else norm_thr
+            norm_thr = int(threshold_frames);
+            norm_thr = -1 if norm_thr < -1 else norm_thr
         except:
             norm_thr = -1
         if state.settings.split_gap_threshold_frames != norm_thr:
@@ -354,13 +356,17 @@ class TimelineHarvesterFacade:
         return [{"filename": meta.filename, "path": meta.path, "format": meta.format_type or "N/A"}
                 for meta in state.edit_files]
 
-    def get_edit_shots_summary(self, time_format: str = "Timecode") -> List[Dict]:
-        """Gets detailed summary of edit shots, formatted for display."""
+    def get_edit_shots_summary(self) -> List[Dict]:
+        """
+        Gets detailed summary of edit shots, providing RAW time objects and rates
+        for the GUI to format and sort.
+        """
         state = self.project_manager.get_state()
         summary = []
-        # Determine sequence rate (copied logic, maybe centralize rate finding?)
+        # Determine sequence rate once
         sequence_rate: Optional[float] = None
         if state.edit_shots:
+            # Logic to find sequence_rate (as before)
             for shot in state.edit_shots:
                 if shot.timeline_range and shot.timeline_range.duration.rate > 0: sequence_rate = float(
                     shot.timeline_range.duration.rate); break
@@ -369,66 +375,74 @@ class TimelineHarvesterFacade:
                     if shot.edit_media_range and shot.edit_media_range.duration.rate > 0: sequence_rate = float(
                         shot.edit_media_range.duration.rate); break
         if sequence_rate is None: sequence_rate = 25.0
+        logger.debug(f"FACADE: Using sequence rate {sequence_rate} for Edit Shots Summary.")
 
         for idx, shot in enumerate(state.edit_shots):
             source_info = shot.found_original_source
             original_path = source_info.path if source_info else "N/A"
             edit_media_id = shot.edit_media_path or "N/A"
+
+            # --- Get Raw Time Objects and Rates ---
+            source_start_rt = source_info.start_timecode if source_info else None
+            source_duration_rt = source_info.duration if source_info else None
             source_rate = float(source_info.frame_rate) if source_info and source_info.frame_rate else None
+
+            source_point_in_rt = shot.edit_media_range.start_time if shot.edit_media_range else None
+            source_point_duration_rt = shot.edit_media_range.duration if shot.edit_media_range else None
             source_point_rate = float(
-                shot.edit_media_range.duration.rate) if shot.edit_media_range and shot.edit_media_range.duration.rate > 0 else None
-            current_sequence_rate = sequence_rate  # Use consistent rate for edit times
+                source_point_duration_rt.rate) if source_point_duration_rt and source_point_duration_rt.rate > 0 else None
 
-            # Calculate inclusive end times for display
-            source_out_rt_incl = None
-            if source_info and source_info.start_timecode and source_info.duration and source_info.duration.value > 0:
+            edit_in_rt = shot.timeline_range.start_time if shot.timeline_range else None
+            edit_duration_rt = shot.timeline_range.duration if shot.timeline_range else None
+            # Use the overall sequence rate for edit position times
+            current_sequence_rate = sequence_rate
+
+            # Calculate exclusive end times (raw)
+            source_out_rt_excl = None
+            if source_start_rt and source_duration_rt:
                 try:
-                    source_out_rt_incl = source_info.start_timecode + opentime.RationalTime(
-                        source_info.duration.value - 1, source_info.duration.rate)
+                    source_out_rt_excl = source_start_rt + source_duration_rt;
                 except:
                     pass
-            source_point_out_rt_incl = None
-            if shot.edit_media_range and shot.edit_media_range.duration.value > 0:
+            source_point_out_rt_excl = None
+            if source_point_in_rt and source_point_duration_rt:
                 try:
-                    source_point_out_rt_incl = shot.edit_media_range.start_time + opentime.RationalTime(
-                        shot.edit_media_range.duration.value - 1, shot.edit_media_range.duration.rate)
+                    source_point_out_rt_excl = source_point_in_rt + source_point_duration_rt;
                 except:
                     pass
-            edit_out_rt_incl = None
-            if shot.timeline_range and shot.timeline_range.duration.value > 0:
+            edit_out_rt_excl = None
+            if edit_in_rt and edit_duration_rt:
                 try:
-                    edit_out_rt_incl = shot.timeline_range.start_time + opentime.RationalTime(
-                        shot.timeline_range.duration.value - 1, shot.timeline_range.duration.rate)
+                    rescaled_dur = edit_duration_rt.rescaled_to(edit_in_rt.rate)
+                    edit_out_rt_excl = edit_in_rt + rescaled_dur
                 except:
                     pass
 
+            # --- Build Summary Item with RAW data ---
             summary_item = {
                 "index": idx + 1,
                 "clip_name": shot.clip_name or os.path.basename(edit_media_id) or "N/A",
                 "edit_media_id": edit_media_id,
                 "source_path": original_path,
                 "status": shot.lookup_status,
-                # Formatted times
-                "source_in_str": format_time_for_display(source_info.start_timecode if source_info else None,
-                                                         source_rate, time_format),
-                "source_out_str": format_time_for_display(source_out_rt_incl, source_rate, time_format),
-                "source_dur_str": format_time_for_display(source_info.duration if source_info else None, source_rate,
-                                                          time_format),
-                "source_point_in_str": format_time_for_display(
-                    shot.edit_media_range.start_time if shot.edit_media_range else None, source_point_rate,
-                    time_format),
-                "source_point_out_str": format_time_for_display(source_point_out_rt_incl, source_point_rate,
-                                                                time_format),
-                "source_point_dur_str": format_time_for_display(
-                    shot.edit_media_range.duration if shot.edit_media_range else None, source_point_rate, time_format),
-                "edit_in_str": format_time_for_display(shot.timeline_range.start_time if shot.timeline_range else None,
-                                                       current_sequence_rate, time_format),
-                "edit_out_str": format_time_for_display(edit_out_rt_incl, current_sequence_rate, time_format),
-                "edit_dur_str": format_time_for_display(shot.timeline_range.duration if shot.timeline_range else None,
-                                                        current_sequence_rate, time_format),
-                # Raw values for sorting or other logic if needed by GUI? Maybe not necessary.
-                # "source_in_rt": shot.found_original_source.start_timecode if shot.found_original_source else None,
-                # ... etc
+
+                # Raw Original Source Data
+                "source_in_rt": source_start_rt,
+                "source_out_rt_excl": source_out_rt_excl,  # Pass exclusive end
+                "source_duration_rt": source_duration_rt,
+                "source_rate": source_rate,
+
+                # Raw Source Point Data (Absolute)
+                "source_point_in_rt": source_point_in_rt,
+                "source_point_out_rt_excl": source_point_out_rt_excl,  # Pass exclusive end
+                "source_point_duration_rt": source_point_duration_rt,
+                "source_point_rate": source_point_rate,
+
+                # Raw Edit Position Data (Absolute)
+                "edit_in_rt": edit_in_rt,
+                "edit_out_rt_excl": edit_out_rt_excl,  # Pass exclusive end
+                "edit_duration_rt": edit_duration_rt,
+                "sequence_rate": current_sequence_rate
             }
             summary.append(summary_item)
         return summary
@@ -492,7 +506,7 @@ class TimelineHarvesterFacade:
             range_str = "N/A"  # Format the source point range (absolute)
             if shot.edit_media_range and isinstance(shot.edit_media_range.start_time,
                                                     opentime.RationalTime) and isinstance(
-                    shot.edit_media_range.duration, opentime.RationalTime):
+                shot.edit_media_range.duration, opentime.RationalTime):
                 try:
                     rate = float(shot.edit_media_range.duration.rate)
                     if rate <= 0: rate = float(shot.edit_media_range.start_time.rate)
