@@ -13,6 +13,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 
 logger = logging.getLogger(__name__)
 
+
 class FileListWidget(QWidget):
     """A widget showing a list of paths with Add/Remove/Clear buttons."""
     # Signal emitted when the list of paths changes
@@ -35,7 +36,7 @@ class FileListWidget(QWidget):
         self._title = title
         self._file_filter = file_filter
         self._select_directory = select_directory
-        self.last_browse_dir = os.path.expanduser("~") # Store last directory
+        self.last_browse_dir = os.path.expanduser("~")  # Store last directory
 
         self._init_ui()
         self._connect_signals()
@@ -43,7 +44,7 @@ class FileListWidget(QWidget):
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0) # No margins for embedding
+        main_layout.setContentsMargins(0, 0, 0, 0)  # No margins for embedding
 
         # Optional Title Label
         if self._title:
@@ -56,7 +57,7 @@ class FileListWidget(QWidget):
         self.list_widget = QListWidget()
         self.list_widget.setAlternatingRowColors(True)
         self.list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        main_layout.addWidget(self.list_widget, 1) # Allow list to stretch
+        main_layout.addWidget(self.list_widget, 1)  # Allow list to stretch
 
         # Button Layout
         button_layout = QHBoxLayout()
@@ -99,31 +100,31 @@ class FileListWidget(QWidget):
             )
             if dir_path:
                 newly_added_paths.append(os.path.abspath(dir_path))
-                self.last_browse_dir = dir_path # Update last dir
+                self.last_browse_dir = dir_path  # Update last dir
         else:
             file_paths, _ = QFileDialog.getOpenFileNames(
                 self, f"Select {self._title}", self.last_browse_dir, self._file_filter
             )
             if file_paths:
                 newly_added_paths = [os.path.abspath(p) for p in file_paths]
-                self.last_browse_dir = os.path.dirname(file_paths[0]) # Update last dir
+                self.last_browse_dir = os.path.dirname(file_paths[0])  # Update last dir
 
         added_count = 0
         if newly_added_paths:
             for path in newly_added_paths:
                 if path not in self._paths:
-                    if os.path.exists(path): # Final check
-                         self._paths.append(path)
-                         added_count += 1
+                    if os.path.exists(path):  # Final check
+                        self._paths.append(path)
+                        added_count += 1
                     else:
                         logger.warning(f"Path selected does not exist: {path}")
                 else:
-                     logger.debug(f"Path already in list: {path}")
+                    logger.debug(f"Path already in list: {path}")
 
             if added_count > 0:
                 logger.info(f"Added {added_count} new path(s) to '{self._title}'.")
                 self._update_list_widget()
-                self.pathsChanged.emit(self._paths[:]) # Emit full updated list
+                self.pathsChanged.emit(self._paths[:])  # Emit full updated list
 
     @pyqtSlot()
     def remove_selected_items(self):
@@ -155,8 +156,8 @@ class FileListWidget(QWidget):
         self.list_widget.clear()
         # Sort paths for display consistency
         # sorted_paths = sorted(self._paths)
-        for path in self._paths: # Use internal order for now
-            item = QListWidgetItem(path) # Display full path for directories
+        for path in self._paths:  # Use internal order for now
+            item = QListWidgetItem(path)  # Display full path for directories
             # Or display basename for files? Could be configurable.
             # if not self._select_directory: item.setText(os.path.basename(path))
             item.setData(Qt.UserRole, path)
@@ -177,11 +178,11 @@ class FileListWidget(QWidget):
         for p in paths:
             abs_path = os.path.abspath(p)
             if os.path.exists(abs_path) and check_func(abs_path):
-                 if abs_path not in valid_paths: # Avoid duplicates
-                     valid_paths.append(abs_path)
+                if abs_path not in valid_paths:  # Avoid duplicates
+                    valid_paths.append(abs_path)
             else:
-                 logger.warning(f"Invalid or non-existent path ignored during set_paths: {p}")
+                logger.warning(f"Invalid or non-existent path ignored during set_paths: {p}")
 
-        self._paths = sorted(valid_paths) # Store sorted valid paths
+        self._paths = sorted(valid_paths)  # Store sorted valid paths
         self._update_list_widget()
         # Do NOT emit pathsChanged here, as this is usually called when loading state
