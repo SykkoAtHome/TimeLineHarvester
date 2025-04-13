@@ -34,6 +34,7 @@ class EditFileMetadata:
     path: str
     filename: str = field(init=False)  # Derived from path during initialization
     format_type: Optional[str] = None  # e.g., 'EDL', 'AAF', 'FCPXML', 'OTIO_JSON'
+
     # Potential future field: OTIO timeline object, parsed from the edit file.
     # parsed_timeline: Optional[otio.schema.Timeline] = None
 
@@ -115,7 +116,7 @@ class EditShot:
     edit_media_path: str
     edit_media_range: TimeRange
     timeline_range: Optional[TimeRange] = None  # Position on the edit timeline
-    edit_metadata: Dict[str, Any] = field(default_factory=dict) # Edit-specific metadata
+    edit_metadata: Dict[str, Any] = field(default_factory=dict)  # Edit-specific metadata
 
     # --- Fields populated during processing ---
     found_original_source: Optional[OriginalSourceFile] = None  # Link after lookup
@@ -170,11 +171,12 @@ class TransferSegment:
                            tracking lineage.
     """
     original_source: OriginalSourceFile
-    transfer_source_range: TimeRange # Range within original_source, including handles
-    output_targets: Dict[str, str] = field(default_factory=dict) # profile.name -> output_path
-    status: str = "pending" # 'pending', 'calculated', 'running', 'completed', 'failed'
+    transfer_source_range: TimeRange  # Range within original_source, including handles
+    output_targets: Dict[str, str] = field(default_factory=dict)  # profile.name -> output_path
+    status: str = "pending"  # 'pending', 'calculated', 'running', 'completed', 'failed'
     error_message: Optional[str] = None
-    source_edit_shots: List[EditShot] = field(default_factory=list) # Link back to shots
+    segment_id: Optional[str] = None
+    source_edit_shots: List[EditShot] = field(default_factory=list)  # Link back to shots
 
 
 @dataclass
@@ -216,9 +218,9 @@ class TransferBatch:
     # --- Calculation Results ---
     segments: List[TransferSegment] = field(default_factory=list)
     unresolved_shots: List[EditShot] = field(default_factory=list)
-    calculation_errors: List[str] = field(default_factory=list) # Errors during calculation phase
+    calculation_errors: List[str] = field(default_factory=list)  # Errors during calculation phase
 
     # --- Metadata ---
     source_edit_files: List[EditFileMetadata] = field(default_factory=list)
-    batch_name: Optional[str] = None # Optional user-defined name
+    batch_name: Optional[str] = None  # Optional user-defined name
     output_profiles_used: List[OutputProfile] = field(default_factory=list)
