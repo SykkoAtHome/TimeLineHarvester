@@ -10,6 +10,7 @@ import os
 from typing import Optional, List, Dict, Union
 
 import opentimelineio as otio
+from PyQt5.QtCore import QCoreApplication
 from opentimelineio import opentime
 
 from .models import (
@@ -347,7 +348,7 @@ class ProjectManager:
             self.current_state.settings.project_name = os.path.splitext(os.path.basename(save_path))[0]
 
             project_data = {
-                "app_version": "2.0.0",
+                "app_version": QCoreApplication.applicationVersion(),
                 "project_name": self.current_state.settings.project_name,
                 "config": self._serialize_settings(self.current_state.settings),
                 "edit_files": [{'path': f.path, 'format': f.format_type} for f in self.current_state.edit_files],
