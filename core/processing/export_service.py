@@ -5,12 +5,10 @@ to standard edit list formats (EDL, FCPXML, etc.).
 """
 
 import logging
-import os
-from typing import Optional
 
+from .. import exporter  # Import the exporter module
 # Import project state and the exporter module
 from ..project_state import ProjectState
-from .. import exporter  # Import the exporter module
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +33,8 @@ class ExportService:
         Exports the calculated TransferBatch for the specified stage to a file.
 
         Args:
-            stage: The stage to export (currently only 'color' is meaningful).
-            output_path: The full path for the output file (e.g., *.edl, *.xml).
+            stage: The stage to export ('color' or 'online').
+            output_path: The full path for the output file (e.g., *.xml, *.aaf).
 
         Returns:
             True if the export was successful, False otherwise.
@@ -49,21 +47,19 @@ class ExportService:
 
         batch_to_export = None
         separator_frames = 0
-        timeline_base_name = self.state.settings.project_name or "ExportedTimeline"
+        project_name = self.state.settings.project_name or "UntitledProject"
+        desired_timeline_name = f"{project_name}_TRANSFER"
 
         if stage == 'color':
             batch_to_export = self.state.color_transfer_batch
             separator_frames = self.state.settings.color_prep_separator
-            # Use a specific name for the color prep timeline
-            timeline_name = f"{timeline_base_name}_ColorPrep_Export"
+            # timeline_name = f"{timeline_base_name}_ColorPrep_Export"
         elif stage == 'online':
-            # Exporting the online batch might be different (e.g., no separators?)
-            # For now, let's assume it might be needed, but maybe with 0 separator
+            # Exporting the online batch might be different
             batch_to_export = self.state.online_transfer_batch
             separator_frames = 0  # Typically no separators needed for online pull lists
-            timeline_name = f"{timeline_base_name}_OnlinePrep_Export"
-            # You might want to disallow exporting online if it doesn't make sense
-            # logger.warning("Exporting the 'online' batch might not be standard practice.")
+            # timeline_name = f"{timeline_base_name}_OnlinePrep_Export"
+            logger.warning("Exporting the 'online' batch. Timeline name will follow project convention.")
         else:
             logger.error(f"Invalid stage specified for export: '{stage}'.")
             raise ValueError(f"Invalid export stage: {stage}")
@@ -75,7 +71,6 @@ class ExportService:
             raise ValueError(msg)
 
         if not batch_to_export.segments:
-            # Check if there were calculation errors that might explain the empty batch
             if batch_to_export.calculation_errors:
                 error_summary = "; ".join(batch_to_export.calculation_errors)
                 msg = f"Cannot export stage '{stage}': Batch contains no segments (Calculation errors: {error_summary})."
@@ -84,20 +79,18 @@ class ExportService:
             else:
                 msg = f"Cannot export stage '{stage}': Calculated batch is empty (no segments found)."
                 logger.warning(msg)
-                # Depending on requirements, maybe allow exporting an empty file?
-                # For now, treat it as an error condition for export.
                 raise ValueError(msg)
 
         # --- Call Exporter ---
         try:
-            logger.info(f"Calling exporter.export_transfer_batch for {len(batch_to_export.segments)} segments.")
+            logger.info(
+                f"Calling exporter.export_transfer_batch for {len(batch_to_export.segments)} segments with timeline name '{desired_timeline_name}'.")
             success = exporter.export_transfer_batch(
                 transfer_batch=batch_to_export,
                 output_path=output_path,
-                timeline_name=timeline_name,
-                # Let the exporter determine adapter from extension by default
+                timeline_name=desired_timeline_name,
                 export_format_adapter_name=None,
-                adapter_options=None,  # Add options later if needed
+                adapter_options=None,
                 separator_frames=separator_frames
             )
             if success:
@@ -107,5 +100,4 @@ class ExportService:
             return success
         except Exception as e:
             logger.error(f"An unexpected error occurred during export for stage '{stage}': {e}", exc_info=True)
-            # Re-raise or return False? Returning False is safer for the caller.
             return False

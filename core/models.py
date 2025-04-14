@@ -1,3 +1,5 @@
+# core/models.py
+
 # -*- coding: utf-8 -*-
 """
 core/models.py
@@ -101,9 +103,13 @@ class EditShot:
         timeline_range: Time range representing the position and duration of this
                         clip *on the main edit timeline*. Optional, but useful
                         for context.
+        tape_name: The resolved Tape Name or Reel Name associated with this shot,
+                   determined during parsing from edit metadata or filenames.
         edit_metadata: Dictionary containing metadata associated with this clip
                        *within the edit file* (e.g., 'Tape Name', 'Source File'
-                       fields if present in EDL/AAF/XML).
+                       fields if present in EDL/AAF/XML). Note: This dictionary
+                       should still contain the raw metadata for potential future use,
+                       even if `tape_name` is populated separately.
         found_original_source: A reference to the `OriginalSourceFile` object
                                that this edit shot corresponds to, populated
                                after the source lookup process. Defaults to None.
@@ -116,6 +122,7 @@ class EditShot:
     edit_media_path: str
     edit_media_range: TimeRange
     timeline_range: Optional[TimeRange] = None  # Position on the edit timeline
+    tape_name: Optional[str] = None  # <<<--- DODANE POLE
     edit_metadata: Dict[str, Any] = field(default_factory=dict)  # Edit-specific metadata
 
     # --- Fields populated during processing ---
@@ -166,6 +173,8 @@ class TransferSegment:
                 'calculated', 'running', 'completed', 'failed').
         error_message: Stores any error message related to the processing
                        (e.g., transcoding failure) of this specific segment.
+        segment_id: An optional unique identifier for the segment, often derived
+                    from the original source name and potentially a suffix.
         source_edit_shots: A list of the `EditShot` instances that contributed
                            to the creation of this transfer segment. Useful for
                            tracking lineage.
