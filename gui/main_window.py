@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
     def create_toolbar(self):
         """Sets up the main toolbar."""
         self.toolbar = self.addToolBar("Main Toolbar")
+        self.toolbar.setObjectName("mainToolbar")
         self.toolbar.setMovable(False)
         self.toolbar.addAction(self.action_new_project)
         self.toolbar.addAction(self.action_open_project)
