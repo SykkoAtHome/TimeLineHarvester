@@ -8,14 +8,14 @@ timecode is known. Handles identifier extraction more robustly, especially for A
 
 import logging
 import os
-from typing import List, Optional, Union, Dict, Any  # Dodano Dict, Any
+from typing import List, Optional, Union, Dict, Any
 
 import opentimelineio as otio
 from opentimelineio import opentime
 from opentimelineio import schema
 
 # Importuj model EditShot z poprawną ścieżką względną
-from .models import EditShot
+from .models import EditShot, MediaType
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +316,8 @@ def correct_aaf_source_points(edit_shots: List[EditShot]) -> int:
     """
     Post-processes source point ranges for shots parsed from AAF files.
     Uses the start_timecode from the verified OriginalSourceFile.
+
+    Works with all media types including sequences.
     """
     corrected_count = 0
     logger.info("Attempting to correct AAF source point offsets...")
@@ -333,6 +335,18 @@ def correct_aaf_source_points(edit_shots: List[EditShot]) -> int:
             source_info = shot.found_original_source
             source_in = source_info.start_timecode  # Get start TC from verified source
             source_rate = source_info.frame_rate  # Get rate from verified source
+
+            # For image sequences, handle potentially different rates
+            if source_info.media_type == MediaType.IMAGE_SEQUENCE:
+                # For sequences, we need to ensure we have valid timing information
+                if not source_rate or source_rate <= 0:
+                    logger.warning(f"Image sequence '{shot.clip_name}' has invalid frame rate. Using default 25 fps.")
+                    source_rate = 25.0  # Default for sequences with no rate information
+
+                # Ensure we have a valid start timecode for the sequence
+                if not source_in or not isinstance(source_in, opentime.RationalTime):
+                    logger.debug(f"Setting default start timecode for image sequence '{shot.clip_name}'")
+                    source_in = opentime.RationalTime(0, source_rate)
 
             # Validate required data from verified source
             if not isinstance(source_in, opentime.RationalTime):

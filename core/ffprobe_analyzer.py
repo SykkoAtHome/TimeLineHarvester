@@ -87,8 +87,12 @@ class FFProbeAnalyzer:
         logger.info(f"Analyzing file: {os.path.basename(file_path)}")
 
         try:
+            # Check if file is MXF to choose appropriate command
+            is_mxf = file_path.lower().endswith(".mxf")
+            command_type = "mxf" if is_mxf else "standard"
+
             # 1. Analyze the single file provided
-            single_file_data = self._run_ffprobe(file_path)
+            single_file_data = self._run_ffprobe(file_path, command_type=command_type)
             if not single_file_data:
                 # Error already logged by _run_ffprobe
                 result.media_type = MediaType.UNKNOWN
@@ -121,8 +125,6 @@ class FFProbeAnalyzer:
                     result.media_type = MediaType.IMAGE_SEQUENCE
                     result.sequence_pattern = pattern
                     result.sequence_frame_range = frame_range
-                    # Update path in result to represent the sequence pattern
-                    # result.path = pattern # Or keep original path? Let's keep original for now.
 
                     # 4. Analyze the *entire* sequence (optional but recommended for duration)
                     # Use default frame rate (25) for sequence unless overridden later
@@ -147,11 +149,8 @@ class FFProbeAnalyzer:
                             logger.info(f"Sequence analysis successful. Duration: {result.duration}")
                         else:
                             logger.warning(f"FFprobe analysis failed for the full sequence pattern: {pattern}")
-                            # Keep results from single frame analysis but mark as sequence
-
                     except Exception as seq_err:
                         logger.error(f"Error analyzing full sequence '{pattern}': {seq_err}", exc_info=True)
-                        # Fallback to single frame info but still mark as sequence
 
             # Final logging based on type
             if result.media_type == MediaType.IMAGE_SEQUENCE:
@@ -174,7 +173,7 @@ class FFProbeAnalyzer:
         return result
 
     def _run_ffprobe(self, file_path_or_pattern: str, is_sequence: bool = False,
-                     sequence_options: Optional[Dict] = None) -> Optional[Dict]:
+                     sequence_options: Optional[Dict] = None, command_type: str = "standard") -> Optional[Dict]:
         """Runs the ffprobe command and returns the parsed JSON data."""
         command = [self.ffprobe_path, '-v', 'error']
 
@@ -188,15 +187,27 @@ class FFProbeAnalyzer:
                     command.extend(['-framerate', str(sequence_options['framerate'])])
             # Assuming pattern_type sequence for now, adjust if needed
             command.extend(['-pattern_type', 'sequence'])
+        elif command_type == "mxf":
+            # Specialized command for MXF files (tested and working)
+            command.extend([
+                '-select_streams', 'v:0',  # First video stream only
+                '-show_entries',
+                'stream=index,codec_type,codec_name,duration,r_frame_rate,avg_frame_rate,start_time,width,height:stream_tags=timecode:format=duration',
+                '-of', 'json'
+            ])
         else:
-            # Options for single file analysis
-            command.extend(['-select_streams', 'v:0+a?',  # Select first video and optional audio
-                            '-show_entries',
-                            'stream=index,codec_type,codec_name,duration,r_frame_rate,avg_frame_rate,start_time,nb_frames,width,height,channels,channel_layout,sample_rate:stream_tags=timecode:format=duration,start_time',
-                            ])
+            # Standard command for other file types
+            command.extend([
+                '-select_streams', 'v:0',  # First video stream
+                '-select_streams', 'a',  # All audio streams
+                '-show_entries',
+                'stream=index,codec_type,codec_name,duration,r_frame_rate,avg_frame_rate,start_time,nb_frames,width,height,channels,channel_layout,sample_rate:stream_tags=timecode:format=duration,start_time',
+                '-of', 'json',
+                '-sexagesimal'
+            ])
 
-        # Common options
-        command.extend(['-of', 'json', '-sexagesimal', file_path_or_pattern])
+        # Add the file path
+        command.append(file_path_or_pattern)
 
         logger.debug(f"Running ffprobe command: {' '.join(command)}")
         try:
@@ -251,6 +262,27 @@ class FFProbeAnalyzer:
         }
         if not data or 'streams' not in data:
             logger.warning("No 'streams' key found in ffprobe output.")
+            # For simple commands, format data might still have useful information
+            format_data = data.get('format', {})
+            if format_data:
+                # Try to get duration from format section
+                duration_str = format_data.get('duration')
+                if duration_str:
+                    try:
+                        # Try to parse as sexagesimal time format (HH:MM:SS.mmm)
+                        if ':' in duration_str:
+                            duration_rt = otio.opentime.from_timecode(duration_str, default_rate)
+                        else:
+                            # Parse as floating point seconds
+                            duration_secs = float(duration_str)
+                            duration_rt = otio.opentime.RationalTime(
+                                duration_secs * default_rate, default_rate)
+
+                        if duration_rt.value > 0:
+                            parsed['duration'] = duration_rt
+                            logger.debug(f"Using format duration: {duration_str} at {default_rate}fps")
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Could not parse format duration: {duration_str}: {e}")
             return parsed
 
         format_data = data.get('format', {})
@@ -285,9 +317,14 @@ class FFProbeAnalyzer:
             duration_str = video_stream.get('duration') or format_data.get('duration')
             if duration_str:
                 try:
-                    # Use from_time_string which handles various formats
-                    duration_rt = otio.opentime.from_time_string(duration_str, current_rate)
-                    # Ensure duration is positive, min 1 frame if needed?
+                    # Try to handle different duration formats (sexagesimal or numeric)
+                    if ':' in duration_str:  # Looks like sexagesimal (HH:MM:SS.mmm)
+                        duration_rt = otio.opentime.from_timecode(duration_str, current_rate)
+                    else:  # Assume numeric seconds
+                        duration_secs = float(duration_str)
+                        duration_rt = otio.opentime.RationalTime(duration_secs * current_rate, current_rate)
+
+                    # Ensure duration is positive, min 1 frame if needed
                     if duration_rt.value <= 0:
                         logger.warning(f"Parsed duration {duration_rt} is zero or negative, setting to 1 frame.")
                         parsed['duration'] = otio.opentime.RationalTime(1, current_rate)
@@ -337,7 +374,12 @@ class FFProbeAnalyzer:
                 if start_time_str:
                     source_for_timecode = f"'start_time' field ('{start_time_str}')"
                     try:
-                        start_timecode_rt = otio.opentime.from_time_string(start_time_str, current_rate)
+                        # Handle different formats of start_time
+                        if ':' in start_time_str:  # Looks like timecode format
+                            start_timecode_rt = otio.opentime.from_timecode(start_time_str, current_rate)
+                        else:  # Assume numeric seconds
+                            start_secs = float(start_time_str)
+                            start_timecode_rt = otio.opentime.RationalTime(start_secs * current_rate, current_rate)
                         parsed_successfully = True
                     except ValueError as e_start:
                         logger.warning(f"Could not parse 'start_time' string '{start_time_str}': {e_start}")
@@ -353,9 +395,7 @@ class FFProbeAnalyzer:
             logger.debug(f"Parsed start_timecode: {start_timecode_rt} (Source: {source_for_timecode})")
 
         # --- Process Audio Streams (if any) ---
-        # Can add logic here to extract sample rate, channels, etc. if needed
-        # for stream in parsed['audio_streams']:
-        #     pass
+        # Additional audio processing could be added here if needed
 
         return parsed
 

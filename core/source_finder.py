@@ -1,19 +1,18 @@
+# core/source_finder.py
 """
 Finds and verifies original source media files based on information
 extracted from edit timelines (EditShot objects).
 
-Relies on external tools like ffprobe for verification.
-Handles finding bundled executables.
+Relies on FFProbeAnalyzer for verification and media type detection.
 """
-import json
 import logging
 import os
-import subprocess
 from typing import List, Optional, Dict
 
 from opentimelineio import opentime  # Explicit import
 
-from .models import EditShot, OriginalSourceFile
+from .models import EditShot, OriginalSourceFile, MediaType
+from .ffprobe_analyzer import FFProbeAnalyzer, FFProbeAnalyzerError, FFProbeResult
 from utils import find_executable  # Use the one from utils
 
 logger = logging.getLogger(__name__)
@@ -36,21 +35,40 @@ class SourceFinder:
         self.strategy = strategy
         self.verified_cache: Dict[str, OriginalSourceFile] = {}
         self.ffprobe_path = find_executable("ffprobe")
-        if not self.search_paths: logger.warning("SourceFinder initialized with no valid search paths.")
+
+        # Initialize the FFProbeAnalyzer
+        self.analyzer = None
+        if self.ffprobe_path:
+            try:
+                self.analyzer = FFProbeAnalyzer(self.ffprobe_path)
+            except Exception as e:
+                logger.error(f"Failed to initialize FFProbeAnalyzer: {e}", exc_info=True)
+
+        if not self.search_paths:
+            logger.warning("SourceFinder initialized with no valid search paths.")
         logger.info(f"SourceFinder initialized. Strategy: '{self.strategy}'. Search paths: {len(self.search_paths)}")
-        if not self.ffprobe_path: logger.error(
-            "ffprobe executable not found. Source file verification will not be available.")
+        if not self.ffprobe_path:
+            logger.error("ffprobe executable not found. Source file verification will not be available.")
 
     def find_source(self, edit_shot: EditShot) -> Optional[OriginalSourceFile]:
+        """
+        Finds and verifies the original source file for an EditShot.
+
+        Uses FFProbeAnalyzer to detect media type and properties.
+        Falls back to legacy method if analyzer fails.
+        """
         # Use the identifier stored in edit_media_path by the parser
         identifier = edit_shot.edit_media_path or edit_shot.clip_name
         if not identifier:
             logger.warning("Cannot find source: EditShot lacks a usable identifier.")
             return None
+
         logger.debug(f"Finding source for EditShot: Clip='{edit_shot.clip_name}', Identifier='{identifier}'")
+
         if not self.ffprobe_path:
             logger.error(f"Cannot find/verify source for identifier '{identifier}': ffprobe not available.")
             return None
+
         candidate_path = self._find_candidate_path(identifier)
         if not candidate_path:
             if self.search_paths:
@@ -59,31 +77,312 @@ class SourceFinder:
             else:
                 logger.debug("No candidate path found (no search paths).")
             return None
+
         abs_candidate_path = os.path.abspath(candidate_path)
         if abs_candidate_path in self.verified_cache:
             logger.debug(f"Found verified source in cache: {abs_candidate_path}")
             return self.verified_cache[abs_candidate_path]
+
         logger.debug(f"Verifying candidate path: {abs_candidate_path}")
-        verified_info = self._verify_source_with_ffprobe(abs_candidate_path)
-        if verified_info:
-            logger.info(f"Successfully verified original source file: {abs_candidate_path}")
-            # Use dictionary unpacking for cleaner assignment from verified_info
-            original_source = OriginalSourceFile(path=abs_candidate_path, **verified_info)
-            original_source.is_verified = True  # Explicitly set verified flag
-            self.verified_cache[abs_candidate_path] = original_source
-            return original_source
-        else:
-            logger.error(f"Verification failed for candidate source file: {abs_candidate_path}")
+
+        # First try using FFProbeAnalyzer if available
+        if self.analyzer:
+            try:
+                original_source = self._verify_with_analyzer(abs_candidate_path)
+                if original_source:
+                    self.verified_cache[abs_candidate_path] = original_source
+                    return original_source
+                else:
+                    logger.warning(f"FFProbeAnalyzer failed to verify: {abs_candidate_path}")
+            except Exception as e:
+                logger.warning(f"Error using FFProbeAnalyzer: {e}. Falling back to legacy method.")
+
+        # Fall back to legacy verification method if analyzer failed or isn't available
+        info = self._verify_source_with_ffprobe(abs_candidate_path)
+        if info:
+            original_source = self._create_original_source(abs_candidate_path, info)
+            if original_source:
+                logger.info(f"Successfully verified original source file: {abs_candidate_path}")
+                self.verified_cache[abs_candidate_path] = original_source
+                return original_source
+
+        logger.error(f"Verification failed for candidate source file: {abs_candidate_path}")
+        return None
+
+    def _verify_with_analyzer(self, file_path: str) -> Optional[OriginalSourceFile]:
+        """
+        Verifies a source file using the FFProbeAnalyzer.
+
+        Returns:
+            An OriginalSourceFile object if verification succeeds, None otherwise.
+        """
+        try:
+            analysis_result = self.analyzer.analyze(file_path)
+            if not analysis_result:
+                logger.warning(f"FFProbeAnalyzer returned no result for: {file_path}")
+                return None
+
+            # Validate essential information
+            if not analysis_result.frame_rate or analysis_result.frame_rate <= 0:
+                logger.warning(f"Invalid frame rate ({analysis_result.frame_rate}) from analyzer for {file_path}")
+                return None
+
+            if not isinstance(analysis_result.duration, opentime.RationalTime) or analysis_result.duration.value <= 0:
+                logger.warning(f"Invalid duration from analyzer for {file_path}")
+                return None
+
+            if not isinstance(analysis_result.start_timecode, opentime.RationalTime):
+                logger.warning(f"Invalid start timecode from analyzer for {file_path}")
+                return None
+
+            # Create OriginalSourceFile from analysis results
+            source = OriginalSourceFile(
+                path=file_path,
+                media_type=analysis_result.media_type,
+                duration=analysis_result.duration,
+                frame_rate=analysis_result.frame_rate,
+                start_timecode=analysis_result.start_timecode,
+                is_verified=True,
+                metadata=analysis_result.video_stream_info.copy() if analysis_result.video_stream_info else {},
+                sequence_pattern=analysis_result.sequence_pattern,
+                sequence_frame_range=analysis_result.sequence_frame_range
+            )
+
+            # Add audio stream info to metadata if available
+            if analysis_result.audio_stream_info:
+                source.metadata['audio_streams'] = analysis_result.audio_stream_info
+
+            logger.info(f"Successfully verified original source file with analyzer: {file_path}")
+            return source
+
+        except FFProbeAnalyzerError as e:
+            logger.error(f"FFProbeAnalyzer error for {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error during verification with analyzer: {e}", exc_info=True)
+            return None
+
+    def _verify_source_with_ffprobe(self, file_path: str) -> Optional[Dict]:
+        """
+        Directly verifies a media file using ffprobe.
+
+        This is the original implementation from the source_finder module.
+        Kept for compatibility and as a fallback if the analyzer fails.
+
+        Returns:
+            A dictionary with metadata information if verification succeeds, None otherwise.
+        """
+        if not self.ffprobe_path or not os.path.exists(file_path):
+            return None
+
+        try:
+            # Choose the appropriate command based on file type
+            is_mxf = file_path.lower().endswith('.mxf')
+
+            if is_mxf:
+                # MXF-specific command that works correctly
+                command = [
+                    self.ffprobe_path, '-v', 'error',
+                    '-select_streams', 'v:0',  # First video stream
+                    '-show_entries',
+                    'stream=index,codec_type,codec_name,duration,r_frame_rate,avg_frame_rate,start_time,width,height:stream_tags=timecode:format=duration',
+                    '-of', 'json',
+                    file_path
+                ]
+            else:
+                # Standard command for other file types
+                command = [
+                    self.ffprobe_path, '-v', 'error',
+                    '-show_entries',
+                    'stream=index,codec_type,codec_name,duration,r_frame_rate,avg_frame_rate,start_time,nb_frames,width,height,channels,channel_layout,sample_rate:stream_tags=timecode:format=duration,start_time',
+                    '-of', 'json', '-sexagesimal',
+                    file_path
+                ]
+
+            logger.debug(f"Running ffprobe command: {' '.join(command)}")
+
+            import subprocess
+            import json
+
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=30
+            )
+
+            if result.returncode != 0:
+                stderr_snippet = result.stderr.strip()[-500:] if result.stderr else "No stderr output"
+                logger.error(
+                    f"ffprobe failed for '{os.path.basename(file_path)}'. Code: {result.returncode}. Stderr: {stderr_snippet}")
+                return None
+
+            try:
+                data = json.loads(result.stdout)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse ffprobe JSON output: {e}")
+                return None
+
+            # Legacy parsing approach
+            info = {'metadata': {}}
+
+            if not data or 'streams' not in data or not data['streams']:
+                logger.warning(f"No streams found in ffprobe output for '{file_path}'")
+                return None
+
+            # Find video stream
+            video_stream = None
+            for stream in data['streams']:
+                if stream.get('codec_type') == 'video':
+                    video_stream = stream
+                    break
+
+            if not video_stream:
+                logger.warning(f"No video stream found in '{file_path}'")
+                return None
+
+            # Extract frame rate
+            rate_str = video_stream.get('r_frame_rate') or video_stream.get('avg_frame_rate')
+            if rate_str and '/' in rate_str:
+                try:
+                    n, d = map(float, rate_str.split('/'))
+                    if d > 0:
+                        info['frame_rate'] = n / d
+                    else:
+                        logger.warning(f"Invalid frame rate denominator in '{rate_str}'")
+                        return None
+                except (ValueError, TypeError):
+                    logger.warning(f"Could not parse frame rate string: {rate_str}")
+                    return None
+            else:
+                logger.warning(f"No valid frame rate found for '{file_path}'")
+                return None
+
+            # Current frame rate for time calculations
+            current_rate = info['frame_rate']
+
+            # Extract duration
+            format_data = data.get('format', {})
+            duration_str = video_stream.get('duration') or format_data.get('duration')
+
+            if duration_str:
+                try:
+                    # Handle different duration formats
+                    if isinstance(duration_str, str) and ':' in duration_str:
+                        # Format is like "0:01:24.800000" (sexagesimal)
+                        duration_rt = opentime.from_timecode(duration_str, current_rate)
+                    else:
+                        # Format is numeric (seconds)
+                        duration_secs = float(duration_str)
+                        duration_rt = opentime.RationalTime(duration_secs * current_rate, current_rate)
+
+                    info['duration'] = duration_rt
+                except Exception as e:
+                    logger.warning(f"Error parsing duration '{duration_str}': {e}")
+                    return None
+            else:
+                logger.warning(f"No duration found for '{file_path}'")
+                return None
+
+            # Extract timecode
+            tag_timecode_str = video_stream.get('tags', {}).get('timecode')
+            if tag_timecode_str:
+                try:
+                    # First try standard timecode format
+                    start_timecode_rt = opentime.from_timecode(tag_timecode_str, current_rate)
+                    info['start_timecode'] = start_timecode_rt
+                except ValueError:
+                    try:
+                        # Fallback to more flexible parsing
+                        start_timecode_rt = opentime.from_time_string(tag_timecode_str, current_rate)
+                        info['start_timecode'] = start_timecode_rt
+                    except Exception as e:
+                        logger.warning(f"Could not parse timecode '{tag_timecode_str}': {e}")
+                        # Default to zero if parsing fails
+                        info['start_timecode'] = opentime.RationalTime(0, current_rate)
+                except Exception as e:
+                    logger.warning(f"Error parsing timecode '{tag_timecode_str}': {e}")
+                    # Default to zero if parsing fails
+                    info['start_timecode'] = opentime.RationalTime(0, current_rate)
+            else:
+                # No timecode found, default to zero
+                info['start_timecode'] = opentime.RationalTime(0, current_rate)
+
+            # Save additional metadata
+            for key in ['width', 'height', 'codec_name']:
+                if key in video_stream:
+                    info['metadata'][key] = video_stream[key]
+
+            if 'tags' in video_stream:
+                info['metadata']['tags'] = video_stream['tags']
+
+            return info
+
+        except Exception as e:
+            logger.error(f"Error during ffprobe verification for {os.path.basename(file_path)}: {e}",
+                         exc_info=True)
+            return None
+
+    def _create_original_source(self, file_path: str, info: Dict) -> Optional[OriginalSourceFile]:
+        """Creates an OriginalSourceFile from the parsed ffprobe information."""
+        try:
+            # Determine media type based on file extension and codec
+            media_type = MediaType.UNKNOWN
+            file_ext = os.path.splitext(file_path)[1].lower()
+
+            # Check codec name for classification
+            codec_name = info.get('metadata', {}).get('codec_name', '').lower()
+
+            video_extensions = {'.mp4', '.mov', '.mxf', '.avi', '.mkv', '.mpg', '.mpeg', '.dv', '.m4v', '.mts', '.m2ts'}
+            image_extensions = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.dpx', '.exr', '.bmp', '.gif', '.webp'}
+            audio_extensions = {'.wav', '.mp3', '.aac', '.flac', '.m4a', '.ogg', '.wma'}
+
+            if 'audio_streams' in info['metadata'] and not codec_name:
+                media_type = MediaType.AUDIO
+            elif file_ext in image_extensions or codec_name in ['mjpeg', 'png', 'jpeg', 'tiff', 'dpx', 'exr']:
+                media_type = MediaType.IMAGE
+            elif file_ext in video_extensions or codec_name:
+                media_type = MediaType.VIDEO
+            elif file_ext in audio_extensions:
+                media_type = MediaType.AUDIO
+
+            # Create and return the OriginalSourceFile
+            source = OriginalSourceFile(
+                path=file_path,
+                media_type=media_type,
+                duration=info.get('duration'),
+                frame_rate=info.get('frame_rate'),
+                start_timecode=info.get('start_timecode'),
+                is_verified=True,
+                metadata=info.get('metadata', {}),
+                sequence_pattern=None,  # Legacy method doesn't detect sequences
+                sequence_frame_range=None
+            )
+
+            return source
+        except Exception as e:
+            logger.error(f"Error creating OriginalSourceFile from info: {e}", exc_info=True)
             return None
 
     def _find_candidate_path(self, identifier: str) -> Optional[str]:
-        if not self.search_paths or not identifier: return None
+        """
+        Finds a candidate path for the source file using the specified strategy.
+
+        Current implementation uses basic_name_match strategy.
+        """
+        if not self.search_paths or not identifier:
+            return None
+
         if self.strategy == "basic_name_match":
             base_name = os.path.basename(identifier)
             name_stem = base_name.split('.')[0]
             if not name_stem:
                 logger.warning(f"Could not extract base name stem from identifier: {identifier}")
                 return None
+
             logger.debug(f"Searching for original source matching stem: '{name_stem}' (from identifier '{identifier}')")
             for search_dir in self.search_paths:
                 try:
@@ -103,134 +402,6 @@ class SourceFinder:
         else:
             logger.error(f"Unknown source finding strategy: '{self.strategy}'")
             return None
-
-    def _verify_source_with_ffprobe(self, file_path: str) -> Optional[Dict]:
-        """Verifies file with ffprobe, parsing timecode correctly."""
-        if not self.ffprobe_path or not os.path.exists(file_path): return None
-
-        try:
-            logger.info(f"Running ffprobe on: {os.path.basename(file_path)}")
-            command = [self.ffprobe_path, '-v', 'error', '-select_streams', 'v:0',
-                       '-show_entries',
-                       'stream=duration,r_frame_rate,avg_frame_rate,start_time,codec_name,width,height:stream_tags=timecode:format=duration,start_time',
-                       '-of', 'json', '-sexagesimal', file_path]
-            result = subprocess.run(command, capture_output=True, text=True, check=False, encoding='utf-8',
-                                    errors='ignore', timeout=30)
-
-            if result.returncode != 0:
-                logger.error(
-                    f"ffprobe failed for '{os.path.basename(file_path)}'. Code: {result.returncode}\nStderr: {result.stderr.strip()}")
-                return None
-            try:
-                data = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                logger.error(f"Failed ffprobe JSON parse for '{os.path.basename(file_path)}'"); return None
-            if not data or 'streams' not in data or not data['streams']: logger.error(
-                f"ffprobe missing 'streams' for '{os.path.basename(file_path)}'."); return None
-
-            stream = data['streams'][0]
-            format_data = data.get('format', {})
-            info = {'metadata': {}}  # Dictionary to be returned
-
-            # --- Frame Rate ---
-            rate_str = stream.get('r_frame_rate') or stream.get('avg_frame_rate')
-            if not rate_str or '/' not in rate_str: logger.error(
-                f"Invalid frame rate string '{rate_str}' for {os.path.basename(file_path)}"); return None
-            try:
-                n, d = map(float, rate_str.split('/'))
-                if d <= 0: raise ValueError("Rate denominator zero/negative")
-                frame_rate = n / d
-                info['frame_rate'] = frame_rate  # Store in info dict
-            except Exception as e:
-                logger.error(f"Error parsing frame rate '{rate_str}': {e}"); return None
-
-            # --- Duration ---
-            duration_str = stream.get('duration') or format_data.get('duration')
-            if duration_str:
-                try:
-                    duration_rt = opentime.from_time_string(duration_str, frame_rate)
-                    info['duration'] = duration_rt if duration_rt.value > 0 else opentime.RationalTime(1,
-                                                                                                       frame_rate)  # Store in info dict
-                except Exception as e:
-                    logger.error(f"Error parsing duration '{duration_str}': {e}"); return None
-            else:
-                logger.error(f"Missing duration for {os.path.basename(file_path)}"); return None
-
-            # --- Start Timecode (FIXED PARSING LOGIC) ---
-            start_timecode_rt = opentime.RationalTime(0, frame_rate)
-            parsed_successfully = False
-            source_for_timecode = "default (0)"
-
-            tag_timecode_str = stream.get('tags', {}).get('timecode')
-            if tag_timecode_str:
-                source_for_timecode = f"'tags.timecode' ('{tag_timecode_str}')"
-                logger.debug(f"  Attempting to parse {source_for_timecode} with rate {frame_rate}")
-                try:  # Attempt 1: from_timecode
-                    start_timecode_rt = opentime.from_timecode(tag_timecode_str, frame_rate)
-                    logger.debug(f"    Successfully parsed using from_timecode: {start_timecode_rt}")
-                    parsed_successfully = True
-                except ValueError as e_tcode:  # Catch only ValueError here
-                    logger.warning(
-                        f"    from_timecode failed for '{tag_timecode_str}' (Rate: {frame_rate}): {e_tcode}. Trying fallback.")
-                    try:  # Attempt 2: from_time_string fallback
-                        start_timecode_rt = opentime.from_time_string(tag_timecode_str, frame_rate)
-                        logger.debug(f"    Successfully parsed using from_time_string fallback: {start_timecode_rt}")
-                        parsed_successfully = True
-                        source_for_timecode += " [parsed via from_time_string fallback]"
-                    except ValueError as e_str:  # Catch only ValueError
-                        logger.warning(f"    from_time_string also failed for '{tag_timecode_str}': {e_str}")
-                        source_for_timecode += " [parsing failed]"
-                    except Exception as e_fallback:  # Catch other errors during fallback
-                        logger.error(f"    Unexpected error during from_time_string fallback: {e_fallback}",
-                                     exc_info=False)  # Log less verbosely
-                        source_for_timecode += " [parsing error]"
-                except Exception as e_tcode_other:  # Catch other errors during from_timecode
-                    logger.error(f"    Unexpected error parsing 'tags.timecode' with from_timecode: {e_tcode_other}",
-                                 exc_info=False)
-                    source_for_timecode += " [parsing error]"
-
-            if not parsed_successfully:  # Try 'start_time' field if tag parsing failed
-                start_time_str = stream.get('start_time') or format_data.get('start_time')
-                if start_time_str:
-                    source_for_timecode = f"'start_time' field ('{start_time_str}')"
-                    logger.debug(
-                        f"  Attempting to parse {source_for_timecode} using from_time_string (Rate: {frame_rate})")
-                    try:
-                        start_timecode_rt = opentime.from_time_string(start_time_str, frame_rate)
-                        logger.debug(f"    Successfully parsed using from_time_string: {start_timecode_rt}")
-                        parsed_successfully = True
-                    except ValueError as e_start:
-                        logger.warning(
-                            f"    Could not parse 'start_time' string '{start_time_str}' using from_time_string: {e_start}")
-                        source_for_timecode += " [parsing failed]"
-                    except Exception as e_start_other:
-                        logger.error(f"    Unexpected error parsing 'start_time': {e_start_other}", exc_info=False)
-                        source_for_timecode += " [parsing error]"
-
-            if not parsed_successfully:  # Final log if all failed
-                logger.warning(f"  No valid start time/timecode parsed from available fields. Assuming 0.")
-                start_timecode_rt = opentime.RationalTime(0, frame_rate)
-
-            info['start_timecode'] = start_timecode_rt  # Store in info dict
-            logger.info(f"  Final start_timecode set to: {start_timecode_rt} (Source: {source_for_timecode})")
-            # --- End Start Timecode ---
-
-            # --- Metadata ---
-            info['metadata']['codec'] = stream.get('codec_name', 'unknown')
-            info['metadata']['width'] = stream.get('width')
-            info['metadata']['height'] = stream.get('height')
-            # logger.debug(f"  Extracted metadata: Codec={info['metadata']['codec']}, Res={info['metadata']['width']}x{info['metadata']['height']}")
-
-            # Return the dictionary with parsed info (excluding 'is_verified')
-            return info
-
-        except FileNotFoundError:
-            logger.critical(f"ffprobe not found at '{self.ffprobe_path}'"); self.ffprobe_path = None; return None
-        except subprocess.TimeoutExpired:
-            logger.error(f"ffprobe timed out for {file_path}"); return None
-        except Exception as e:
-            logger.error(f"Error during ffprobe verification for {os.path.basename(file_path)}: {e}",
-                         exc_info=True); return None
 
     def clear_cache(self):
         """Clears the internal cache of verified source files."""
