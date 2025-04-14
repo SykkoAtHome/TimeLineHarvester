@@ -9,7 +9,7 @@ needed by the application, such as ffmpeg and ffprobe.
 import logging
 import os
 import shutil  # For shutil.which (system PATH search)
-import sys     # For PyInstaller bundle detection (sys.frozen, sys._MEIPASS)
+import sys  # For PyInstaller bundle detection (sys.frozen, sys._MEIPASS)
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -64,19 +64,20 @@ def find_executable(name: str) -> Optional[str]:
                     break  # Found in a subfolder, stop searching bundle
 
         if not found_path:
-             logger.warning(
-                 "'%s' not found within the PyInstaller bundle directory (%s) or its subfolders (%s).",
-                 executable_name, bundle_dir, ', '.join(_COMMON_EXECUTABLE_SUBFOLDERS)
-             )
-             # Fallback to PATH check below is possible if desired, but often
-             # bundled apps should contain all dependencies.
+            logger.warning(
+                "'%s' not found within the PyInstaller bundle directory (%s) or its subfolders (%s).",
+                executable_name, bundle_dir, ', '.join(_COMMON_EXECUTABLE_SUBFOLDERS)
+            )
+            # Fallback to PATH check below is possible if desired, but often
+            # bundled apps should contain all dependencies.
 
     # --- 2. Check conventional subfolders relative to script (if not bundled) ---
     if not found_path and not getattr(sys, 'frozen', False):
         try:
-            # Assume this utility is in core/utils, find the root directory
-            # This might be fragile if the directory structure changes significantly.
-            app_root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            # --- CORRECTED CALCULATION ---
+            # Assumes utils directory is directly under the application root.
+            utils_dir = os.path.dirname(os.path.abspath(__file__))
+            app_root_dir = os.path.dirname(utils_dir)  # Go up one level from utils dir
         except NameError:
             # __file__ might not be defined (e.g., interactive interpreter)
             app_root_dir = os.getcwd()
@@ -88,7 +89,7 @@ def find_executable(name: str) -> Optional[str]:
             if os.path.exists(exe_path):
                 found_path = exe_path
                 logger.info("Found '%s' in relative subfolder: %s", name, subfolder)
-                break # Found, stop searching relative folders
+                break  # Found, stop searching relative folders
 
     # --- 3. Fallback to system PATH ---
     if not found_path:
@@ -103,7 +104,7 @@ def find_executable(name: str) -> Optional[str]:
                 "Executable '%s' could not be located in bundle, relative subfolders (%s), or system PATH.",
                 name, ', '.join(_COMMON_EXECUTABLE_SUBFOLDERS)
             )
-            return None # Explicitly return None if not found
+            return None  # Explicitly return None if not found
 
     # Return the validated, absolute path
-    return os.path.abspath(found_path)
+    return os.path.abspath(found_path) if found_path else None  # Return absolute path or None

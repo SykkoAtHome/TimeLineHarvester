@@ -371,7 +371,13 @@ class SourceFinder:
         """
         Finds a candidate path for the source file using the specified strategy.
 
-        Current implementation uses basic_name_match strategy.
+        Searches recursively through all subdirectories of the search paths.
+
+        Args:
+            identifier: The identifier string to match against file names.
+
+        Returns:
+            The absolute path to the found file, or None if no match was found.
         """
         if not self.search_paths or not identifier:
             return None
@@ -383,21 +389,25 @@ class SourceFinder:
                 logger.warning(f"Could not extract base name stem from identifier: {identifier}")
                 return None
 
-            logger.debug(f"Searching for original source matching stem: '{name_stem}' (from identifier '{identifier}')")
+            logger.debug(
+                f"Searching recursively for original source matching stem: '{name_stem}' (from identifier '{identifier}')")
+
             for search_dir in self.search_paths:
                 try:
-                    for item_name in os.listdir(search_dir):
-                        item_path = os.path.join(search_dir, item_name)
-                        if os.path.isfile(item_path):
-                            item_stem = item_name.split('.')[0]
-                            if item_stem.lower() == name_stem.lower():
-                                logger.info(f"Found potential original source match for '{identifier}': {item_path}")
-                                return os.path.abspath(item_path)
+                    # Walk through the directory tree recursively
+                    for root, dirs, files in os.walk(search_dir):
+                        for file_name in files:
+                            file_stem = file_name.split('.')[0]
+                            if file_stem.lower() == name_stem.lower():
+                                file_path = os.path.join(root, file_name)
+                                logger.info(f"Found potential original source match for '{identifier}': {file_path}")
+                                return os.path.abspath(file_path)
                 except OSError as e:
                     logger.warning(f"Could not access directory '{search_dir}': {e}")
                 except Exception as e:
                     logger.error(f"Error searching directory '{search_dir}': {e}", exc_info=True)
-            logger.debug(f"No match found for stem '{name_stem}' in search paths.")
+
+            logger.debug(f"No match found for stem '{name_stem}' in search paths (including subdirectories).")
             return None
         else:
             logger.error(f"Unknown source finding strategy: '{self.strategy}'")
