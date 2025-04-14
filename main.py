@@ -4,6 +4,8 @@ import sys
 import logging
 import os
 
+from core.about import TLH_VERSION
+
 # Determine application directory
 if getattr(sys, 'frozen', False):
     app_dir = os.path.dirname(sys.executable)
@@ -88,7 +90,7 @@ def main():
     # Set application attributes
     QCoreApplication.setOrganizationName("TimelineHarvesterOrg")
     QCoreApplication.setApplicationName("TimelineHarvester")
-    QCoreApplication.setApplicationVersion("2.0.0")
+    QCoreApplication.setApplicationVersion(TLH_VERSION)
 
     # Create QApplication
     app_instance = QApplication.instance() or QApplication(sys.argv)

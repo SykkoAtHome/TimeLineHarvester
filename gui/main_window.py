@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 
 # Import the Facade
 from core.timeline_harvester_facade import TimelineHarvesterFacade
+from core.about import get_about_html
 
 # Import GUI components
 from .color_prep_tab import ColorPrepTabWidget
@@ -931,12 +932,18 @@ class MainWindow(QMainWindow):
     # --- About Dialog ---
 
     def show_about_dialog(self):
-        """Shows the about dialog."""
-        QMessageBox.about(
-            self, "About TimelineHarvester",
-            f"<h2>TimelineHarvester</h2>"
-            f"<p>Version {QCoreApplication.applicationVersion()}</p>"
-            f"<p>Workflow tool for preparing media for color grading and online editing.</p>"
-            f"<p>(Uses OpenTimelineIO and FFmpeg/FFprobe)</p>"
-            f"<p>Qt Version: {Qt.QT_VERSION_STR}</p>"
-        )
+        """Shows the about dialog using content generated from core.about."""
+        try:
+            about_content_html = get_about_html()
+            QMessageBox.about(
+                self,
+                "About TimelineHarvester",
+                about_content_html
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate or show About dialog: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Could not display About information.\nError: {e}"
+            )
