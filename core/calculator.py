@@ -8,12 +8,12 @@ Handles segment splitting based on the gap threshold *before* handles are applie
 import logging
 import os
 from collections import defaultdict
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict
 
 from opentimelineio import opentime
 
 # Import utils for time and handle operations
-from utils import handle_utils, time_utils
+from utils import handle_utils
 # Import necessary models
 from .models import EditShot, TransferSegment, TransferBatch
 
@@ -272,10 +272,19 @@ def calculate_transfer_batch(
 
                 # 4. Generate segment ID (add suffix if needed)
                 segment_counters[base_filename] += 1
+
+                # POPRAWKA - Lepsze wybieranie nazwy segmentu
+                # Użyj clip_name jako podstawy, jeśli jest dostępny
+                segment_id = base_filename
+                if shot_group and len(shot_group) > 0:
+                    representative_shot = shot_group[0]
+                    if representative_shot.clip_name:
+                        # Użyj nazwy pierwszego shota jako bazowej nazwy segmentu
+                        segment_id = representative_shot.clip_name
+
+                # Dodaj sufiks tylko jeśli jest więcej niż jeden segment dla tego źródła
                 if len(list_of_shot_groups) > 1:
-                    segment_id = f"{base_filename}_seg{segment_counters[base_filename]}"
-                else:
-                    segment_id = base_filename
+                    segment_id = f"{segment_id}_seg{segment_counters[base_filename]}"
 
                 # 5. Create the TransferSegment
                 transfer_segment = TransferSegment(

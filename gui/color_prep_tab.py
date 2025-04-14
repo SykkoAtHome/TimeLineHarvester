@@ -1,4 +1,4 @@
-# gui/color_prep_tab.py
+# gui/color_prep_tab.py (modified to use EnhancedResultsDisplayWidget)
 """
 Widget managing the Color Grading Preparation stage UI and actions.
 """
@@ -10,8 +10,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QGroupBox, QSpinBox, QCheckBox, QLabel,
                              QPushButton, QSplitter)
 
-# Import the reusable results display
-from .results_display import ResultsDisplayWidget
+# Import the enhanced results display
+from .enhanced_results_display import EnhancedResultsDisplayWidget
 
 logger = logging.getLogger(__name__)
 
@@ -136,16 +136,8 @@ class ColorPrepTabWidget(QWidget):
 
         splitter.addWidget(top_widget)
 
-        # Bottom part: Results Display
-        self.results_widget = ResultsDisplayWidget()
-
-        # Configure columns for color prep (hide transcode status/error)
-        try:
-            self.results_widget.segments_table.setColumnHidden(4, True)
-            self.results_widget.segments_table.setColumnHidden(5, True)
-        except Exception as e:
-            logger.warning(f"Could not hide columns in segments table: {e}")
-
+        # Bottom part: Enhanced Results Display
+        self.results_widget = EnhancedResultsDisplayWidget()
         splitter.addWidget(self.results_widget)
         splitter.setSizes([200, 500])
 
@@ -154,6 +146,7 @@ class ColorPrepTabWidget(QWidget):
         # Connect internal UI elements
         self.same_handles_check.stateChanged.connect(self._update_handles_state)
         self.start_handles_spin.valueChanged.connect(self._update_end_handles_if_linked)
+        self.separator_spin.valueChanged.connect(self._update_separator_value)
 
         # Emit settingsChanged when relevant values change
         self.start_handles_spin.valueChanged.connect(self._emit_settings_changed)
@@ -186,6 +179,10 @@ class ColorPrepTabWidget(QWidget):
             self.end_handles_spin.setValue(self.start_handles_spin.value())
         self.settingsChanged.emit()
 
+        # Update handle value in enhanced display widget
+        handle_frames = self.start_handles_spin.value()
+        self.results_widget.set_handle_frames(handle_frames)
+
     @pyqtSlot(int)
     def _update_end_handles_if_linked(self, value):
         """
@@ -198,6 +195,19 @@ class ColorPrepTabWidget(QWidget):
             self.end_handles_spin.blockSignals(True)
             self.end_handles_spin.setValue(value)
             self.end_handles_spin.blockSignals(False)
+
+        # Update handle value in enhanced display widget
+        self.results_widget.set_handle_frames(value)
+
+    @pyqtSlot(int)
+    def _update_separator_value(self, value):
+        """
+        Update separator frames in the enhanced display widget.
+
+        Args:
+            value: New separator frames value
+        """
+        self.results_widget.set_separator_frames(value)
 
     def get_handles(self) -> Tuple[int, int]:
         """
@@ -235,8 +245,7 @@ class ColorPrepTabWidget(QWidget):
         self.separator_spin.setValue(0)
         self.split_gap_spin.setValue(-1)
 
-        if hasattr(self.results_widget, 'clear_results'):
-            self.results_widget.clear_results()
+        self.results_widget.clear_results()
 
         self.update_button_states(False, False, False)
         logger.info("ColorPrepTabWidget cleared.")
@@ -270,8 +279,15 @@ class ColorPrepTabWidget(QWidget):
         self.end_handles_spin.setValue(end_val if not same else self.start_handles_spin.value())
         self.end_handles_spin.setEnabled(not same)
 
-        self.separator_spin.setValue(settings.get('color_prep_separator', 0))
+        # Set separator and gap threshold
+        separator_frames = settings.get('color_prep_separator', 0)
+        self.separator_spin.setValue(separator_frames)
         self.split_gap_spin.setValue(settings.get('split_gap_threshold_frames', -1))
+
+        # Update enhanced display widget
+        handle_frames = self.start_handles_spin.value()
+        self.results_widget.set_handle_frames(handle_frames)
+        self.results_widget.set_separator_frames(separator_frames)
 
     def get_tab_settings(self) -> Dict:
         """
