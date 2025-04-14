@@ -15,14 +15,16 @@ from opentimelineio import opentime, schema
 
 # Import necessary models
 from .models import TransferBatch  # Use relative import within the package
+import pathlib
 
 logger = logging.getLogger(__name__)
 
 # Mapping from common extensions to OTIO adapter names for WRITING
 SUPPORTED_EXPORT_FORMATS: Dict[str, str] = {
-    '.edl': 'cmx_3600_edl',
-    '.xml': 'fcpxml',  # Default XML to FCPXML
-    '.fcpxml': 'fcpxml',
+    '.edl': 'cmx_3600',
+    '.xml': 'fcp_xml',
+    '.fcpxml': 'fcp_xml',
+    '.aaf': 'AAF'
 }
 
 
@@ -141,8 +143,8 @@ def export_transfer_batch(
         # --- Create Media Reference ---
         try:
             abs_source_path = os.path.abspath(original_source.path)
-            # Use filepath_to_url for cross-platform compatibility
-            source_url = otio.url_utils.filepath_to_url(abs_source_path)
+            # Use pathlib to create a file URI
+            source_url = pathlib.Path(abs_source_path).as_uri()
         except Exception as url_err:
             logger.error(
                 f"Skipping segment {i + 1}: Could not create file URL for path '{original_source.path}': {url_err}.")

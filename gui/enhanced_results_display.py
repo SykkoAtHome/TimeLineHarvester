@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTab
                              QLabel, QSizePolicy, QSpacerItem, QSplitter, QFrame)
 
 from opentimelineio import opentime
+from utils.time_utils import ensure_non_negative_time
 
 # Import custom timeline display widget
 # Assuming the file is placed in gui/custom_widgets/timeline_display.py

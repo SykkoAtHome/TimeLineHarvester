@@ -704,17 +704,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Error", error_msg)
             return
 
-        proj_name = state.settings.project_name or "ColorTransfer"
-        default_name = f"{proj_name}_ColorPrep.edl"
+        proj_name = state.settings.project_name or "UntitledProject"
+        default_name = f"{proj_name}_TRANSFER.aaf"
         start_dir = self.last_export_dir or os.path.dirname(
             self.harvester.get_current_project_path() or self.last_project_dir)
-        file_path, _ = QFileDialog.getSaveFileName(
+
+        file_filters = "AAF (*.aaf);;FCP XML (*.xml *.fcpxml);;CMX EDL (*.edl);;All Files (*)"
+
+        file_path, selected_filter = QFileDialog.getSaveFileName(
             self, "Export Timeline for Color",
             os.path.join(start_dir, default_name),
-            "CMX EDL (*.edl);;FCP XML (*.xml *.fcpxml);;All Files (*)"
+            file_filters
         )
         if not file_path:
             return
+
+        name_part, _ = os.path.splitext(file_path)
+        if selected_filter.startswith("AAF") and not file_path.lower().endswith(".aaf"):
+            file_path = name_part + ".aaf"
+        elif selected_filter.startswith("FCP XML") and not (
+                file_path.lower().endswith(".xml") or file_path.lower().endswith(".fcpxml")):
+            file_path = name_part + ".xml"
+        elif selected_filter.startswith("CMX EDL") and not file_path.lower().endswith(".edl"):
+            file_path = name_part + ".edl"
 
         self.last_export_dir = os.path.dirname(file_path)
         self.status_manager.set_busy(True, f"Exporting to {os.path.basename(file_path)}...")
@@ -729,7 +741,8 @@ class MainWindow(QMainWindow):
             else:
                 self.status_manager.set_status("Export failed. Check logs.", temporary=False)
                 QMessageBox.critical(self, "Export Failed",
-                                     "Could not export timeline for color grading. Please check the application logs for details.")
+                                     "Could not export timeline for color grading. Please check the application logs "
+                                     "for details.")
         except Exception as e:
             logger.error(f"Unexpected error during color export task: {e}", exc_info=True)
             self.status_manager.set_status(f"Export Error: {e}", temporary=False)
