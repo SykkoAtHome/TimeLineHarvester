@@ -465,14 +465,23 @@ class TimelineHarvesterFacade:
                 tc_string = f"{seg.transfer_source_range.start_time.to_seconds():.3f}s"
 
             source_basename = os.path.basename(seg.original_source.path) if seg.original_source else "N/A"
+            # Get the stored segment ID, fallback to basename if None/empty
+            segment_identifier = seg.segment_id if seg.segment_id else source_basename
+
             summary.append({
                 "index": i + 1,
-                "source_basename": source_basename,
+                "segment_id": segment_identifier,
+                "source_basename": source_basename,  # Keep for potential other uses
                 "source_path": seg.original_source.path if seg.original_source else "N/A",
                 "range_start_tc": tc_string,
                 "duration_sec": duration_sec,
                 "status": seg.status,
-                "error": seg.error_message or ""
+                "error": seg.error_message or "",
+                # Pass frame rate and raw time objects for enhanced display
+                'frame_rate': rate,
+                'start_rt': seg.transfer_source_range.start_time if seg.transfer_source_range else None,
+                'duration_rt': seg.transfer_source_range.duration if seg.transfer_source_range else None,
+                # 'source_edit_shots': seg.source_edit_shots # Avoid passing this large list unless needed
             })
 
         return summary

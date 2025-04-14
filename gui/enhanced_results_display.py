@@ -580,7 +580,7 @@ class EnhancedResultsDisplayWidget(QWidget):
         Displays the transfer segment plan in the segments table and timeline.
 
         Args:
-            segment_summary: List of segment dictionaries with information
+            segment_summary: List of segment dictionaries with information.
         """
         logger.debug(f"Displaying transfer plan summary for {len(segment_summary)} segments.")
 
@@ -610,38 +610,21 @@ class EnhancedResultsDisplayWidget(QWidget):
             source_basename = os.path.basename(source_path)
             row_brush = status_colors.get(status, status_colors["default"])
 
-            # POPRAWKA: Pobierz właściwą nazwę segmentu
-            # Najpierw spróbuj pobrać segment_id, potem sprawdź, czy segment ma powiązane EditShots
-            segment_id = seg_info.get('segment_id', '')
-            if not segment_id and 'source_edit_shots' in seg_info and seg_info['source_edit_shots']:
-                # Jeśli segment ma powiązane EditShots, użyj nazwy pierwszego
-                first_shot = seg_info['source_edit_shots'][0]
-                if hasattr(first_shot, 'clip_name') and first_shot.clip_name:
-                    segment_id = first_shot.clip_name
-
-            # Jeśli nadal nie mamy nazwy, użyj nazwy pliku źródłowego
-            if not segment_id:
-                segment_id = source_basename
-                # Usuń rozszerzenie pliku
-                segment_id = os.path.splitext(segment_id)[0]
-
-            # Dodaj sufiks _segN jeśli to segment podzielony na częsci
-            if "seg" in seg_info:
-                segment_id = f"{segment_id}_seg{seg_info['seg']}"
-
-            # Ostatecznie, jeśli nadal nie mamy nazwy, użyj numeru segmentu
-            if not segment_id:
-                segment_id = f"Segment {row + 1}"
+            # --- Simplified Segment Name Handling ---
+            # Directly use the segment_id passed from the facade.
+            # Fallback to a generic name if ID is missing (shouldn't happen with facade fix).
+            segment_name_from_facade = seg_info.get('segment_id', f'Segment {row + 1}')
+            # --- End Simplified Handling ---
 
             # Extract time information
-            start_tc_str = seg_info.get('range_start_tc', 'N/A')
+            start_tc_str = seg_info.get('range_start_tc', 'N/A') # Original string from facade (for reference)
             duration_sec = seg_info.get('duration_sec', 0.0)
 
-            # Store frame rate for timeline display
-            frame_rate = self._segments_frame_rate
+            # Store frame rate for timeline display and calculations
+            frame_rate = self._segments_frame_rate # Use default or previously set rate
             if 'frame_rate' in seg_info and seg_info['frame_rate'] > 0:
                 frame_rate = seg_info['frame_rate']
-                self._segments_frame_rate = frame_rate
+                self._segments_frame_rate = frame_rate # Update default if a new rate is found
 
             # Handle calculation for use TC (without handles)
             handle_frames = self._handle_frames
@@ -652,7 +635,7 @@ class EnhancedResultsDisplayWidget(QWidget):
                 item = QTableWidgetItem(str(text))
                 item.setBackground(row_brush)
                 if align != Qt.AlignLeft:
-                    item.setTextAlignment(align)
+                    item.setTextAlignment(align | Qt.AlignVCenter) # Add vertical center align
                 return item
 
             # Create helper function to create time items
@@ -665,13 +648,21 @@ class EnhancedResultsDisplayWidget(QWidget):
                     item.setData(RawTimeRole, rt_value)
                     item.setData(RateRole, rate)
                     try:
+                        # Store numeric value (frames) for sorting
                         numeric_val = int(round(rt_value.rescaled_to(rate).value))
                         item.setData(Qt.EditRole, QVariant(numeric_val))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Could not set numeric sort value for {rt_value}: {e}")
+                        pass # Continue even if numeric sorting fails
+                    # Set initial display text
                     self._update_cell_time_display(item, rt_value, rate)
                 else:
+                    # Set N/A if time object or rate is invalid
                     item.setText("N/A")
+                    # Set data roles to None for invalid time
+                    item.setData(RawTimeRole, None)
+                    item.setData(RateRole, None)
+                    item.setData(Qt.EditRole, QVariant()) # Clear numeric sort value
 
                 return item
 
@@ -685,8 +676,8 @@ class EnhancedResultsDisplayWidget(QWidget):
             index_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             table.setItem(row, self.SEG_COL_IDX, index_item)
 
-            # Segment name
-            table.setItem(row, self.SEG_COL_NAME, create_std_item(segment_id))
+            # Segment name (uses the simplified name from facade)
+            table.setItem(row, self.SEG_COL_NAME, create_std_item(segment_name_from_facade))
 
             # Source name and path
             table.setItem(row, self.SEG_COL_SOURCE_NAME, create_std_item(source_basename))
@@ -696,56 +687,56 @@ class EnhancedResultsDisplayWidget(QWidget):
 
             # --- Handle time fields ---
 
-            # Try to convert time information to RationalTime objects
-            start_rt = None
-            try:
-                # Check if we have actual RationalTime objects in the segment info
-                if 'start_rt' in seg_info and isinstance(seg_info['start_rt'], opentime.RationalTime):
-                    start_rt = seg_info['start_rt']
-                # Otherwise try to create from timecode string
-                elif start_tc_str and start_tc_str != 'N/A' and frame_rate > 0:
-                    start_rt = opentime.from_timecode(start_tc_str, frame_rate)
-            except Exception as e:
-                logger.warning(f"Could not parse start time for segment {segment_id}: {e}")
+            # Get RationalTime objects passed from facade (if available)
+            start_rt = seg_info.get('start_rt')
+            duration_rt = seg_info.get('duration_rt')
 
-            # Create duration RationalTime from seconds
-            duration_rt = None
-            if duration_sec > 0 and frame_rate > 0:
-                try:
-                    duration_rt = opentime.RationalTime(duration_sec * frame_rate, frame_rate)
-                except Exception as e:
-                    logger.warning(f"Could not create duration for segment {segment_id}: {e}")
-
-            # Create end time from start + duration
+            # Calculate end time from start + duration if both are valid
             end_rt = None
-            if start_rt and duration_rt:
+            if isinstance(start_rt, opentime.RationalTime) and isinstance(duration_rt, opentime.RationalTime):
                 try:
-                    end_rt = start_rt + duration_rt
+                    # Ensure rates match before addition, rescaled if needed
+                    if start_rt.rate == duration_rt.rate:
+                        end_rt = start_rt + duration_rt
+                    elif frame_rate > 0:
+                         # Rescale both to the determined frame_rate for consistency
+                         start_rescaled = start_rt.rescaled_to(frame_rate)
+                         duration_rescaled = duration_rt.rescaled_to(frame_rate)
+                         end_rt = start_rescaled + duration_rescaled
+                    else:
+                         logger.warning(f"Cannot calculate end time for segment {segment_name_from_facade}: Rates differ and no valid frame_rate.")
                 except Exception as e:
-                    logger.warning(f"Could not calculate end time for segment {segment_id}: {e}")
+                    logger.warning(f"Could not calculate end time for segment {segment_name_from_facade}: {e}")
 
-            # Create use TC in/out (without handles)
+            # Calculate inclusive end time for display
+            end_rt_incl = get_inclusive_end(end_rt, frame_rate)
+
+            # Calculate use TC in/out (without handles)
             use_tc_in_rt = None
             use_tc_out_rt = None
-            if start_rt and duration_rt and handle_frames > 0:
+            if isinstance(start_rt, opentime.RationalTime) and isinstance(end_rt_incl, opentime.RationalTime) and handle_frames > 0 and frame_rate > 0:
                 try:
-                    # Start without handle
                     handle_frames_rt = opentime.RationalTime(handle_frames, frame_rate)
+                    # Start without handle
                     use_tc_in_rt = start_rt + handle_frames_rt
+                    # End without handle (use calculated inclusive end)
+                    use_tc_out_rt = end_rt_incl - handle_frames_rt
 
-                    # End without handle
-                    if end_rt:
-                        use_tc_out_rt = end_rt - handle_frames_rt
+                    # Ensure non-negative times
+                    use_tc_in_rt = ensure_non_negative_time(use_tc_in_rt)
+                    if isinstance(use_tc_out_rt, opentime.RationalTime):
+                        use_tc_out_rt = ensure_non_negative_time(use_tc_out_rt)
+
                 except Exception as e:
-                    logger.warning(f"Could not calculate use TC for segment {segment_id}: {e}")
+                    logger.warning(f"Could not calculate use TC for segment {segment_name_from_facade}: {e}")
 
-            # Set time cells
+            # Set time cells using the helper function
             table.setItem(row, self.SEG_COL_TC_IN, create_time_item(start_rt, frame_rate))
-            table.setItem(row, self.SEG_COL_TC_OUT, create_time_item(end_rt, frame_rate))
+            table.setItem(row, self.SEG_COL_TC_OUT, create_time_item(end_rt_incl, frame_rate)) # Display inclusive end
             table.setItem(row, self.SEG_COL_USE_TC_IN, create_time_item(use_tc_in_rt, frame_rate))
             table.setItem(row, self.SEG_COL_USE_TC_OUT, create_time_item(use_tc_out_rt, frame_rate))
 
-            # Set duration as a time item
+            # Set duration as a time item (for consistent formatting/sorting)
             table.setItem(row, self.SEG_COL_DURATION, create_time_item(duration_rt, frame_rate))
 
             # Set status and error
@@ -754,31 +745,33 @@ class EnhancedResultsDisplayWidget(QWidget):
             table.setItem(row, self.SEG_COL_ERROR, create_std_item(error_msg))
 
             # --- Store timeline data ---
-            # Collect necessary data for the timeline display
-            if start_rt and duration_rt:
+            # Collect necessary data for the timeline display widget
+            if isinstance(start_rt, opentime.RationalTime) and duration_sec > 0:
                 timeline_item = {
-                    'segment_id': segment_id,
+                    'segment_id': segment_name_from_facade, # Use the correct name here too
                     'start_sec': start_rt.to_seconds(),
                     'duration_sec': duration_sec,
                     'frame_rate': frame_rate,
                     'status': status
                 }
 
-                # Add handle information if available
+                # Add handle information if available and applicable
                 if handle_frames > 0:
-                    handle_sec = handle_frames / frame_rate
+                    handle_sec = handle_frames / frame_rate if frame_rate > 0 else 0
                     timeline_item['handle_start_sec'] = handle_sec
-                    timeline_item['handle_end_sec'] = handle_sec
+                    timeline_item['handle_end_sec'] = handle_sec # Assuming symmetric handles for visualization
 
                 timeline_data.append(timeline_item)
 
         # --- Finalize table ---
         table.blockSignals(False)
         table.setSortingEnabled(True)
+        # Optionally resize columns to fit content after populating
+        # table.resizeColumnsToContents()
 
         # --- Update timeline visualization ---
         self.segments_timeline.clear()
-        self.segments_timeline.set_frame_rate(self._segments_frame_rate)
+        self.segments_timeline.set_frame_rate(self._segments_frame_rate) # Ensure timeline widget uses the latest rate
 
         # Only update if we have data and timeline is initialized
         if timeline_data:
