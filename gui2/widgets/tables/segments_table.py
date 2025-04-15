@@ -149,8 +149,19 @@ class SegmentsTable(BaseTableWidget):
         self._rows_data = data
 
         # Determine frame rate from data if available
-        if data and 'frame_rate' in data[0] and data[0]['frame_rate'] > 0:
-            self._frame_rate = data[0]['frame_rate']
+        # Use the first segment's rate as a representative rate for the table
+        self._frame_rate = 25.0  # Default
+        if data:
+            first_segment_rate = data[0].get('frame_rate')
+            if first_segment_rate and first_segment_rate > 0:
+                self._frame_rate = first_segment_rate
+            else:
+                # Fallback: try finding rate from first segment's time data if main rate missing
+                start_rt = data[0].get('start_rt')
+                if isinstance(start_rt, opentime.RationalTime) and start_rt.rate > 0:
+                    self._frame_rate = start_rt.rate
+
+        logger.debug(f"Using frame rate {self._frame_rate} for segments table population")
 
         # Disable sorting temporarily for better performance
         self.table.setSortingEnabled(False)
@@ -166,9 +177,10 @@ class SegmentsTable(BaseTableWidget):
 
             # Create and add items for each column
             for col_index, key in enumerate(self._column_keys):
-                # Handle time columns specially
+                item: Optional[QTableWidgetItem] = None  # Define item variable scope
+
+                # Handle time columns specially using the modified helpers
                 if col_index in self._time_columns:
-                    # Create time item
                     item = self._create_time_item(
                         row_data,
                         self._time_columns[col_index],
@@ -176,93 +188,79 @@ class SegmentsTable(BaseTableWidget):
                         False,  # Not a duration
                         row_index
                     )
-
-                    # Set background color
-                    item.setBackground(QBrush(row_color))
-
-                    # Add to table
-                    self.table.setItem(row_index, col_index, item)
-
-                # Handle duration column specially
+                # Handle duration column specially using the modified helper
                 elif col_index in self._duration_columns:
-                    # Get the duration value in seconds
-                    duration_sec = row_data.get(key, 0.0)
+                    # Get the duration value in seconds (or from duration_rt if available)
+                    duration_rt = row_data.get('duration_rt')
+                    duration_sec = 0.0
+                    if isinstance(duration_rt, opentime.RationalTime) and duration_rt.rate > 0:
+                        duration_sec = duration_rt.to_seconds()
+                    elif isinstance(row_data.get(key), (int, float)):  # Fallback to duration_sec key
+                        duration_sec = row_data.get(key, 0.0)
 
-                    # Create duration item
                     item = self._create_duration_item(
                         duration_sec,
                         self._frame_rate,
                         row_index
                     )
-
-                    # Set background color
-                    item.setBackground(QBrush(row_color))
-
-                    # Add to table
-                    self.table.setItem(row_index, col_index, item)
-
                 else:
-                    # Get the value for this cell
+                    # Handle non-time columns
                     value = self._get_nested_value(row_data, key)
 
                     # Customize display for certain columns
                     if col_index == self.SEG_COL_SOURCE_NAME and value is None:
                         # Generate basename from source_path if not provided
                         source_path = row_data.get('source_path', '')
-                        if source_path:
-                            value = os.path.basename(source_path)
-                        else:
-                            value = "N/A"
+                        value = os.path.basename(source_path) if source_path else "N/A"
 
-                    # Create the item
+                    # Create the standard item
                     alignment = Qt.AlignRight if isinstance(value, (int, float)) else Qt.AlignLeft
+                    str_value = str(value) if value is not None else "N/A"
+                    item = self.create_table_item(
+                        str_value,
+                        row_index,
+                        tooltip=str_value,
+                        alignment=alignment
+                    )
 
-                    # For index column, ensure proper numeric sorting
+                    # Add numeric data for index column sorting
                     if col_index == self.SEG_COL_IDX and isinstance(value, (int, float)):
-                        item = self.create_table_item(
-                            str(value),
-                            row_index,
-                            tooltip=None,
-                            alignment=alignment
-                        )
-                        item.setData(Qt.EditRole, value)  # For numeric sorting
-                    else:
-                        item = self.create_table_item(
-                            str(value) if value is not None else "N/A",
-                            row_index,
-                            tooltip=str(value) if value is not None else None,
-                            alignment=alignment
-                        )
+                        item.setData(Qt.EditRole, value)
 
-                        # Set background color
+                # Set background color and add item to table if created
+                if item is not None:
                     item.setBackground(QBrush(row_color))
-
-                    # Add to table
                     self.table.setItem(row_index, col_index, item)
+                else:
+                    # Fallback: Create an empty item if helper returned None unexpectedly
+                    logger.warning(f"Item creation failed for row {row_index}, col {col_index}")
+                    self.table.setItem(row_index, col_index, QTableWidgetItem("Error"))
 
-                    # Re-enable sorting
-                self.table.setSortingEnabled(True)
+        # Re-enable sorting AFTER the loop
+        self.table.setSortingEnabled(True)
 
-                # Update count label
-                visible_count = sum(1 for row in range(self.table.rowCount())
-                                    if not self.table.isRowHidden(row))
-                self.count_label.setText(f"{visible_count} of {len(data)} items")
+        # Update count label
+        visible_count = sum(1 for row in range(self.table.rowCount())
+                            if not self.table.isRowHidden(row))
+        self.count_label.setText(f"{visible_count} of {len(data)} items")
 
-                # Apply filter if active
-                if self._with_filter and self.filter_input.text():
-                    self._apply_filter()
+        # Apply filter if active
+        if self._with_filter and self.filter_input.text():
+            self._apply_filter()
 
-                # Apply current time format to ensure proper display
-                self.refresh_time_display()
+        # Apply current time format to ensure proper display AFTER population
+        # This is the crucial single call that formats all time cells
+        self.refresh_time_display()
 
     def _create_time_item(self,
                           row_data: Dict[str, Any],
                           time_key: str,
                           frame_rate: float,
-                          is_duration: bool,
+                          is_duration: bool,  # Keep argument, but don't use it here
                           row_index: int) -> QTableWidgetItem:
         """
-        Create a table item for a time value.
+        Create a table item for a time value, storing raw data.
+        Display text will be set by refresh_time_display.
 
         Args:
             row_data: Dictionary containing row data
@@ -274,7 +272,7 @@ class SegmentsTable(BaseTableWidget):
         Returns:
             Configured QTableWidgetItem
         """
-        item = QTableWidgetItem()
+        item = QTableWidgetItem()  # Create item without text initially
         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         item.setData(Qt.UserRole, row_index)  # Store original index
 
@@ -286,8 +284,8 @@ class SegmentsTable(BaseTableWidget):
             item.setData(RawTimeRole, rt_value)
             item.setData(RateRole, frame_rate)
 
-            # Format display text based on current format
-            self._update_time_display(item, rt_value, frame_rate)
+            # --- REMOVED THIS CALL ---
+            # self._update_time_display(item, rt_value, frame_rate)
 
             # Store numeric value for sorting
             try:
@@ -299,8 +297,12 @@ class SegmentsTable(BaseTableWidget):
                 item.setData(Qt.EditRole, numeric_val)
             except Exception as e:
                 logger.warning(f"Error converting time to numeric value: {e}")
+                item.setText("N/A")  # Set text only on error here
+                item.setData(Qt.EditRole, None)  # Ensure no sort value on error
+
         else:
-            item.setText("N/A")
+            item.setText("N/A")  # Set text if no valid time data
+            item.setData(Qt.EditRole, None)
 
         return item
 
@@ -309,7 +311,8 @@ class SegmentsTable(BaseTableWidget):
                               frame_rate: float,
                               row_index: int) -> QTableWidgetItem:
         """
-        Create a table item for a duration value in seconds.
+        Create a table item for a duration value in seconds, storing raw data.
+        Display text will be set by refresh_time_display.
 
         Args:
             duration_sec: Duration in seconds
@@ -319,11 +322,11 @@ class SegmentsTable(BaseTableWidget):
         Returns:
             Configured QTableWidgetItem
         """
-        item = QTableWidgetItem()
+        item = QTableWidgetItem()  # Create item without text initially
         item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         item.setData(Qt.UserRole, row_index)  # Store original index
 
-        if duration_sec > 0:
+        if duration_sec > 0 and frame_rate > 0:
             # Create RationalTime from seconds
             frame_count = round(duration_sec * frame_rate)
             rt_value = opentime.RationalTime(frame_count, frame_rate)
@@ -332,8 +335,8 @@ class SegmentsTable(BaseTableWidget):
             item.setData(RawTimeRole, rt_value)
             item.setData(RateRole, frame_rate)
 
-            # Format display text based on current format
-            self._update_time_display(item, rt_value, frame_rate, is_duration=True)
+            # --- REMOVED THIS CALL ---
+            # self._update_time_display(item, rt_value, frame_rate, is_duration=True)
 
             # Store numeric value for sorting (in frames)
             item.setData(Qt.EditRole, frame_count)
@@ -341,7 +344,7 @@ class SegmentsTable(BaseTableWidget):
             # Add tooltip with seconds
             item.setToolTip(f"{duration_sec:.3f} seconds")
         else:
-            item.setText("0")
+            item.setText("0")  # Set text only for zero duration
             item.setData(Qt.EditRole, 0)
 
         return item

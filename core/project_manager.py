@@ -22,14 +22,15 @@ from .models import (
     TransferBatch,
     TransferSegment,
     OutputProfile,
-    MediaType # Import MediaType
+    MediaType  # Import MediaType
 )
 from .project_state import ProjectState, ProjectSettings
 
 logger = logging.getLogger(__name__)
 
 
-def time_to_json(otio_time: Optional[Union[otio.opentime.RationalTime, otio.opentime.TimeRange]]) -> Optional[Union[List, Dict]]:
+def time_to_json(otio_time: Optional[Union[otio.opentime.RationalTime, otio.opentime.TimeRange]]) -> Optional[
+    Union[List, Dict]]:
     """Serializes OTIO RationalTime or TimeRange to a JSON-compatible format."""
     if isinstance(otio_time, opentime.RationalTime):
         return [otio_time.value, otio_time.rate]
@@ -40,13 +41,15 @@ def time_to_json(otio_time: Optional[Union[otio.opentime.RationalTime, otio.open
     return None
 
 
-def time_from_json(json_data: Optional[Union[List, Dict]]) -> Optional[Union[otio.opentime.RationalTime, otio.opentime.TimeRange]]:
+def time_from_json(json_data: Optional[Union[List, Dict]]) -> Optional[
+    Union[otio.opentime.RationalTime, otio.opentime.TimeRange]]:
     """Deserializes JSON data back into OTIO RationalTime or TimeRange."""
     if isinstance(json_data, list) and len(json_data) == 2:
         try:
             rate = json_data[1]
             if rate <= 0:
-                logger.warning(f"Cannot create RationalTime from JSON with non-positive rate: {rate}, data: {json_data}")
+                logger.warning(
+                    f"Cannot create RationalTime from JSON with non-positive rate: {rate}, data: {json_data}")
                 return None
             return opentime.RationalTime(value=json_data[0], rate=rate)
         except Exception as e:
@@ -58,10 +61,12 @@ def time_from_json(json_data: Optional[Union[List, Dict]]) -> Optional[Union[oti
             duration = time_from_json(json_data["duration"])
             if isinstance(start_time, opentime.RationalTime) and isinstance(duration, opentime.RationalTime):
                 if duration.value < 0:
-                    logger.warning(f"Loaded TimeRange with negative duration: {duration}, using 0 instead. Data: {json_data}")
+                    logger.warning(
+                        f"Loaded TimeRange with negative duration: {duration}, using 0 instead. Data: {json_data}")
                     duration = opentime.RationalTime(0, duration.rate)
                 return opentime.TimeRange(start_time=start_time, duration=duration)
-            logger.warning(f"Invalid start/duration types for TimeRange from JSON: start={type(start_time)}, dur={type(duration)}, data={json_data}")
+            logger.warning(
+                f"Invalid start/duration types for TimeRange from JSON: start={type(start_time)}, dur={type(duration)}, data={json_data}")
             return None
         except Exception as e:
             logger.warning(f"Error converting dict to TimeRange: {e}, data: {json_data}")
@@ -94,56 +99,11 @@ class ProjectManager:
             self.current_state.is_dirty = dirty
             logger.debug(f"Project state dirty flag set to: {dirty}")
 
-    def _deserialize_settings(self, config_data: Dict) -> ProjectSettings:
+    def _deserialize_settings(self, config_data: Dict, project_name_from_json: Optional[str]) -> ProjectSettings:
         """Helper to deserialize the settings part of the project data."""
         settings = ProjectSettings()
         # Preserve the project name determined during loading
-        settings.project_name = self.current_state.settings.project_name
-
-        settings.source_lookup_strategy = config_data.get("source_lookup_strategy", "basic_name_match")
-        settings.source_search_paths = config_data.get("source_search_paths", [])
-        settings.graded_source_search_paths = config_data.get("graded_source_search_paths", [])
-
-        loaded_profiles = []
-        profiles_data = config_data.get("output_profiles", [])
-        if isinstance(profiles_data, list):
-            for p_data in profiles_data:
-                if isinstance(p_data, dict):
-                    try:
-                        # Ensure only expected fields are passed to avoid TypeError
-                        profile = OutputProfile(
-                            name=p_data.get('name', 'Unnamed'),
-                            extension=p_data.get('extension', 'mov')
-                            # Add other fields if OutputProfile gains more attributes
-                        )
-                        loaded_profiles.append(profile)
-                    except Exception as e:
-                        logger.warning(f"Skipping invalid output profile data during load: {p_data}, Error: {e}")
-        settings.output_profiles = loaded_profiles
-
-        # Load handle settings
-        settings.color_prep_start_handles = config_data.get("color_prep_start_handles", 25)
-        # Backward compatibility: if only color_prep_handles exists, use it for both
-        if "color_prep_handles" in config_data and "color_prep_start_handles" not in config_data:
-            settings.color_prep_start_handles = config_data.get("color_prep_handles", 25)
-
-        settings.color_prep_end_handles = config_data.get("color_prep_end_handles", settings.color_prep_start_handles)
-        # Backward compatibility for linked handles
-        settings.color_same_handles = config_data.get("color_same_handles", settings.color_prep_start_handles == settings.color_prep_end_handles)
-
-        settings.color_prep_separator = config_data.get("color_prep_separator", 0)
-        settings.split_gap_threshold_frames = config_data.get("split_gap_threshold_frames", -1)
-        settings.online_prep_handles = config_data.get("online_prep_handles", 12)
-        settings.online_target_resolution = config_data.get("online_target_resolution")
-        settings.online_analyze_transforms = config_data.get("online_analyze_transforms", False)
-        settings.online_output_directory = config_data.get("online_output_directory")
-        return settings
-
-    def _deserialize_settings(self, config_data: Dict) -> ProjectSettings:
-        """Helper to deserialize the settings part of the project data."""
-        settings = ProjectSettings()
-        # Preserve the project name determined during loading
-        settings.project_name = self.current_state.settings.project_name
+        settings.project_name = project_name_from_json
 
         settings.source_lookup_strategy = config_data.get("source_lookup_strategy", "basic_name_match")
 
@@ -472,57 +432,69 @@ class ProjectManager:
                 project_data = json.load(f)
 
             new_state = ProjectState()
-            # Set project name immediately for settings deserialization
-            new_state.settings.project_name = project_data.get("project_name")
+
+            # Read project name and saved app version from the root level
+            project_name_read = project_data.get("project_name")
             saved_app_version = project_data.get("app_version", "Unknown")
-            logger.info(f"Loading project '{new_state.settings.project_name}', saved with app version {saved_app_version}.")
+            logger.info(f"Loading project '{project_name_read}', saved with app version {saved_app_version}.")
 
-            # Deserialize settings first
-            new_state.settings = self._deserialize_settings(project_data.get("config", {}))
+            # Deserialize settings, passing the read project name
+            new_state.settings = self._deserialize_settings(
+                project_data.get("config", {}),
+                project_name_read
+            )
 
-            # Deserialize edit file metadata
+            # Deserialize edit file metadata, normalizing paths
             new_state.edit_files = []
             for f_data in project_data.get("edit_files", []):
                 if isinstance(f_data, dict) and 'path' in f_data:
-                    new_state.edit_files.append(EditFileMetadata(path=f_data['path'], format_type=f_data.get('format')))
+                    system_path = normalize_path_for_system(f_data['path'])
+                    new_state.edit_files.append(EditFileMetadata(path=system_path, format_type=f_data.get('format')))
 
             # Deserialize original source cache
             analysis_results = project_data.get("analysis_results", {})
             sources_cache_data = analysis_results.get("original_sources_cache", {})
             new_state.original_sources_cache = {}
-            for path, source_data in sources_cache_data.items():
+            for path_serialized, source_data in sources_cache_data.items():
+                # Normalize the key (path) from storage format to system format
+                system_path_key = normalize_path_for_system(path_serialized)
                 if isinstance(source_data, dict):
                     try:
+                        # Normalize the path stored within the source data object itself
+                        system_path_data = normalize_path_for_system(source_data.get("path", system_path_key))
+
                         loaded_rate = source_data.get("frame_rate")
                         loaded_duration = time_from_json(source_data.get("duration"))
                         start_tc = time_from_json(source_data.get("start_timecode"))
-                        media_type_str = source_data.get("media_type") # Get media type string
-
-                        # Convert media type string to Enum member (handle potential load errors)
+                        media_type_str = source_data.get("media_type")
                         media_type = MediaType.UNKNOWN
                         if media_type_str:
-                             try:
-                                 media_type = MediaType[media_type_str.upper()]
-                             except KeyError:
-                                 logger.warning(f"Unknown media type '{media_type_str}' found for source '{path}', defaulting to UNKNOWN.")
+                            try:
+                                media_type = MediaType[media_type_str.upper()]
+                            except KeyError:
+                                logger.warning(
+                                    f"Unknown media type '{media_type_str}' found for source '{system_path_key}', defaulting to UNKNOWN.")
 
-                        # Ensure required fields are valid
-                        if loaded_rate and isinstance(loaded_duration, opentime.RationalTime) and isinstance(start_tc, opentime.RationalTime):
-                            new_state.original_sources_cache[path] = OriginalSourceFile(
-                                path=source_data.get("path", path),
-                                media_type=media_type, # Use loaded enum member
+                        # Ensure essential time/rate information is valid before creating the object
+                        if loaded_rate and isinstance(loaded_duration, opentime.RationalTime) and isinstance(start_tc,
+                                                                                                             opentime.RationalTime):
+                            new_state.original_sources_cache[system_path_key] = OriginalSourceFile(
+                                path=system_path_data,
+                                media_type=media_type,
                                 duration=loaded_duration,
                                 frame_rate=float(loaded_rate),
                                 start_timecode=start_tc,
                                 is_verified=source_data.get("is_verified", False),
                                 metadata=source_data.get("metadata", {}),
-                                sequence_pattern=source_data.get("sequence_pattern"), # Load sequence info
-                                sequence_frame_range=tuple(source_data.get("sequence_frame_range")) if source_data.get("sequence_frame_range") else None # Load sequence info
+                                sequence_pattern=source_data.get("sequence_pattern"),
+                                sequence_frame_range=tuple(source_data.get("sequence_frame_range")) if source_data.get(
+                                    "sequence_frame_range") else None
                             )
                         else:
-                             logger.warning(f"Skipping invalid source cache entry for {path} due to missing/invalid rate, duration, or start TC.")
+                            logger.warning(
+                                f"Skipping invalid source cache entry for {system_path_key} due to missing/invalid rate, duration, or start TC.")
                     except Exception as e:
-                        logger.warning(f"Skipping invalid source cache entry for {path}: {e}")
+                        logger.warning(f"Error processing source cache entry for {system_path_key}: {e}")
 
             # Deserialize edit shots
             edit_shots_data = analysis_results.get("edit_shots", [])
@@ -533,10 +505,15 @@ class ProjectManager:
                     try:
                         edit_range = time_from_json(shot_data.get("edit_media_range"))
                         timeline_range = time_from_json(shot_data.get("timeline_range"))
-                        original_source_path = shot_data.get("found_original_source_path")
-                        found_original = new_state.original_sources_cache.get(original_source_path) if original_source_path else None
+                        original_source_path_serialized = shot_data.get("found_original_source_path")
+                        found_original = None
+                        if original_source_path_serialized:
+                            # Use flexible path matching to find the source in the cache
+                            matching_cache_key = find_matching_path(original_source_path_serialized,
+                                                                    new_state.original_sources_cache)
+                            if matching_cache_key:
+                                found_original = new_state.original_sources_cache[matching_cache_key]
 
-                        # Validate required fields
                         if not isinstance(edit_range, opentime.TimeRange):
                             logger.warning(f"Skipping edit shot at index {i} due to invalid edit_media_range.")
                             continue
@@ -544,24 +521,25 @@ class ProjectManager:
                         shot = EditShot(
                             clip_name=shot_data.get("clip_name"),
                             edit_media_path=shot_data.get("edit_media_path", ""),
-                            tape_name=shot_data.get("tape_name"), # Load tape name
+                            tape_name=shot_data.get("tape_name"),
                             edit_media_range=edit_range,
-                            timeline_range=timeline_range, # May be None
+                            timeline_range=timeline_range,
                             edit_metadata=shot_data.get("edit_metadata", {}),
                             found_original_source=found_original,
                             lookup_status=shot_data.get("lookup_status", "pending"))
 
-                        # If source path was saved but source not found in cache, reset status
-                        if original_source_path and not found_original:
+                        # If source path was saved but source not found in cache, reset status to pending
+                        if original_source_path_serialized and not found_original:
                             shot.lookup_status = 'pending'
-                            logger.debug(f"Resetting lookup status for shot {i} as source '{original_source_path}' not in cache.")
+                            logger.debug(
+                                f"Resetting lookup status for shot {i} as source '{original_source_path_serialized}' not in cache.")
 
                         new_state.edit_shots.append(shot)
-                        loaded_shots_by_index[i] = shot
+                        loaded_shots_by_index[i] = shot  # Store mapping for batch deserialization
                     except Exception as e:
-                        logger.warning(f"Error loading edit shot at index {i}: {e}.")
+                        logger.warning(f"Error loading edit shot at index {i}: {e}")
 
-            # Deserialize transfer batches (using the loaded shots map)
+            # Deserialize transfer batches, linking to loaded shots and profiles
             new_state.color_transfer_batch = self._deserialize_batch(
                 project_data.get("color_prep_results", {}).get("transfer_batch"),
                 'color',
@@ -578,7 +556,8 @@ class ProjectManager:
             self.current_state = new_state
             self.current_project_path = file_path
             self.current_state.is_dirty = False
-            logger.info(f"Project '{self.current_state.settings.project_name}' loaded successfully.")
+            logger.info(
+                f"Project '{self.current_state.settings.project_name}' loaded successfully.")  # Should log correct name now
             return True
 
         except json.JSONDecodeError as e:
@@ -619,7 +598,7 @@ class ProjectManager:
                         {
                             "clip_name": s.clip_name,
                             "edit_media_path": s.edit_media_path,
-                            "tape_name": s.tape_name, # Save tape name
+                            "tape_name": s.tape_name,  # Save tape name
                             "edit_media_range": time_to_json(s.edit_media_range),
                             "timeline_range": time_to_json(s.timeline_range),
                             "edit_metadata": s.edit_metadata,
@@ -636,8 +615,8 @@ class ProjectManager:
                             "start_timecode": time_to_json(src.start_timecode),
                             "is_verified": src.is_verified,
                             "metadata": src.metadata,
-                            "sequence_pattern": src.sequence_pattern, # Save sequence info
-                            "sequence_frame_range": src.sequence_frame_range # Save sequence info
+                            "sequence_pattern": src.sequence_pattern,  # Save sequence info
+                            "sequence_frame_range": src.sequence_frame_range  # Save sequence info
                         }
                         for path, src in self.current_state.original_sources_cache.items()
                     },
