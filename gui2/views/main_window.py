@@ -16,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ..controllers.application_controller import ApplicationController
+from ..controllers.project_controller import ProjectController  # Add ProjectController import
 from ..models.ui_state_model import UIStateModel
 from ..services.dialog_service import DialogService
 from ..services.event_bus_service import EventBusService, EventType, EventData
@@ -43,13 +44,15 @@ class MainWindow(QMainWindow):
             app_controller: ApplicationController,
             ui_state: UIStateModel,
             event_bus: EventBusService,
-            dialog_service: DialogService
+            dialog_service: DialogService,
+            project_controller: Optional[ProjectController] = None  # Add ProjectController parameter
     ):
         """Initialize the main window with required services and controllers."""
         super().__init__()
 
         # Store references to services and controllers
         self.app_controller = app_controller
+        self.project_controller = project_controller  # Store ProjectController reference
         self.ui_state = ui_state
         self.event_bus = event_bus
         self.dialog_service = dialog_service
@@ -177,8 +180,12 @@ class MainWindow(QMainWindow):
                 if not self._on_save_project():  # If save failed
                     return
 
-        # Create a new project
-        self.app_controller.new_project()
+        # Use project_controller instead of app_controller
+        if self.project_controller:
+            self.project_controller.new_project()
+        else:
+            # Fallback to app_controller if project_controller not available
+            self.app_controller.new_project()
 
     @pyqtSlot()
     def _on_open_project(self):
@@ -198,7 +205,12 @@ class MainWindow(QMainWindow):
         )
 
         if file_path:
-            self.app_controller.load_project(file_path)
+            # Use project_controller instead of app_controller
+            if self.project_controller:
+                self.project_controller.load_project(file_path)
+            else:
+                # Fallback to app_controller if project_controller not available
+                self.app_controller.load_project(file_path)
 
     @pyqtSlot()
     def _on_save_project(self) -> bool:
@@ -208,7 +220,13 @@ class MainWindow(QMainWindow):
         if not current_path:
             return self._on_save_project_as()
 
-        return self.app_controller.save_project(current_path)
+        # Use project_controller instead of app_controller
+        if self.project_controller:
+            return self.project_controller.save_project(current_path)
+        else:
+            # Fallback to app_controller if project_controller not available
+            # Note: This will fail if app_controller doesn't have save_project method
+            return self.app_controller.save_project(current_path)
 
     @pyqtSlot()
     def _on_save_project_as(self) -> bool:
@@ -219,7 +237,13 @@ class MainWindow(QMainWindow):
         )
 
         if file_path:
-            return self.app_controller.save_project(file_path)
+            # Use project_controller instead of app_controller
+            if self.project_controller:
+                return self.project_controller.save_project(file_path)
+            else:
+                # Fallback to app_controller if project_controller not available
+                # Note: This will fail if app_controller doesn't have save_project method
+                return self.app_controller.save_project(file_path)
 
         return False
 

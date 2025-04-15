@@ -188,12 +188,16 @@ class TimelineDisplayWidget(QFrame):
             return super().mousePressEvent(event)
 
         # Calculate segment positions
-        x_positions = self._calculate_segment_positions()
+        positions, scale_factor = self._calculate_segment_positions()
 
         # Check if click is within a segment
         for i, segment in enumerate(self.segments):
-            if i < len(x_positions):
-                seg_x_start, seg_width = x_positions[i]
+            if i < len(positions):
+                # Make sure we unpack the tuple correctly
+                pos_data = positions[i]
+                # Fix: Ensure we're getting the individual values, not a tuple
+                seg_x_start = pos_data[0]  # First element is x position
+                seg_width = pos_data[1]    # Second element is width
                 seg_y = self.padding
 
                 # Check if click is within segment bounds
@@ -249,8 +253,8 @@ class TimelineDisplayWidget(QFrame):
             # Calculate segment width in pixels
             segment_width = max(self.min_segment_width, int(segment.duration * scale_factor))
 
-            # Store position and width
-            positions.append((x_pos, segment_width))
+            # Store position and width as a tuple
+            positions.append((x_pos, segment_width))  # Store as tuple, not a multi-level tuple
 
             # Move x position for next segment
             x_pos += segment_width
@@ -309,7 +313,8 @@ class TimelineDisplayWidget(QFrame):
             if i >= len(positions):
                 break  # Safety check
 
-            x_pos, segment_width = positions[i]
+            # Unpack the position tuple correctly
+            x_pos, segment_width = positions[i]  # First element is x, second is width
 
             # Skip invalid segments
             if segment.duration <= 0:

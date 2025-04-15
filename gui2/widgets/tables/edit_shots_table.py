@@ -91,7 +91,7 @@ class EditShotsTable(BaseTableWidget):
             parent=parent
         )
 
-        # Current time display format
+        # Current time display format - Default to Timecode
         self._time_format = "Timecode"
 
         # Mapping of time columns to data field names
@@ -213,6 +213,9 @@ class EditShotsTable(BaseTableWidget):
         if self._with_filter and self.filter_input.text():
             self._apply_filter()
 
+        # Apply current time format to ensure proper display
+        self.refresh_time_display()
+
     def _create_time_item(self,
                           row_data: Dict[str, Any],
                           time_key: str,
@@ -306,6 +309,7 @@ class EditShotsTable(BaseTableWidget):
             format_name: The format name ("Timecode" or "Frames")
         """
         if format_name in ("Timecode", "Frames") and format_name != self._time_format:
+            logger.info(f"Setting edit shots table time format to: {format_name}")
             self._time_format = format_name
             self.refresh_time_display()
             self.timeFormatChanged.emit(format_name)

@@ -155,7 +155,13 @@ def main():
 
         # --- Create and show GUI2 main window ---
         logger.info("Creating GUI2 main window...")
-        window = MainWindowGUI2(app_controller, ui_state, event_bus, dialog_service)
+        window = MainWindowGUI2(
+            app_controller,
+            ui_state,
+            event_bus,
+            dialog_service,
+            project_controller  # Pass the project_controller to MainWindow
+        )
         dialog_service.set_parent(window) # Important for dialogs
 
         # --- Add actual workflow views to the workspace ---

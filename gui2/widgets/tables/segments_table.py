@@ -88,7 +88,7 @@ class SegmentsTable(BaseTableWidget):
             parent=parent
         )
 
-        # Current time display format
+        # Current time display format - Default to Timecode
         self._time_format = "Timecode"
 
         # Mapping of time columns to data field names
@@ -205,23 +205,26 @@ class SegmentsTable(BaseTableWidget):
                             alignment=alignment
                         )
 
-                    # Set background color
+                        # Set background color
                     item.setBackground(QBrush(row_color))
 
                     # Add to table
                     self.table.setItem(row_index, col_index, item)
 
-        # Re-enable sorting
-        self.table.setSortingEnabled(True)
+                    # Re-enable sorting
+                self.table.setSortingEnabled(True)
 
-        # Update count label
-        visible_count = sum(1 for row in range(self.table.rowCount())
-                            if not self.table.isRowHidden(row))
-        self.count_label.setText(f"{visible_count} of {len(data)} items")
+                # Update count label
+                visible_count = sum(1 for row in range(self.table.rowCount())
+                                    if not self.table.isRowHidden(row))
+                self.count_label.setText(f"{visible_count} of {len(data)} items")
 
-        # Apply filter if active
-        if self._with_filter and self.filter_input.text():
-            self._apply_filter()
+                # Apply filter if active
+                if self._with_filter and self.filter_input.text():
+                    self._apply_filter()
+
+                # Apply current time format to ensure proper display
+                self.refresh_time_display()
 
     def _create_time_item(self,
                           row_data: Dict[str, Any],
@@ -385,6 +388,7 @@ class SegmentsTable(BaseTableWidget):
             format_name: The format name ("Timecode" or "Frames")
         """
         if format_name in ("Timecode", "Frames") and format_name != self._time_format:
+            logger.info(f"Setting segments table time format to: {format_name}")
             self._time_format = format_name
             self.refresh_time_display()
             self.timeFormatChanged.emit(format_name)

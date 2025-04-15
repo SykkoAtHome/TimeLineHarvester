@@ -61,6 +61,7 @@ class WorkflowResultsView(QWidget):
         self.ui_state = ui_state
         self.event_bus = event_bus
         self.workflow = workflow
+        self._time_format = "Timecode"  # Default format
 
         # Initialize UI
         self._init_ui()
@@ -81,6 +82,7 @@ class WorkflowResultsView(QWidget):
         controls_layout.addWidget(QLabel("Time Display:"))
         self.time_format_combo = QComboBox()
         self.time_format_combo.addItems(["Timecode", "Frames"])
+        self.time_format_combo.setCurrentText(self._time_format)  # Set initial value from class property
         controls_layout.addWidget(self.time_format_combo)
 
         # Hide unresolved checkbox
@@ -101,6 +103,10 @@ class WorkflowResultsView(QWidget):
         self.segments_table = SegmentsTable()
         self.unresolved_table = UnresolvedItemsTable()
         self.timeline_widget = TimelineDisplayWidget()
+
+        # Initialize time format in tables
+        self.edit_shots_table.set_time_format(self._time_format)
+        self.segments_table.set_time_format(self._time_format)
 
         # Add tabs
         self.tab_widget.addTab(self.edit_shots_table, "Analysis Results")
@@ -138,6 +144,9 @@ class WorkflowResultsView(QWidget):
     def _on_time_format_changed(self, format_name: str):
         """Handle time format change."""
         logger.debug(f"Time format changed to: {format_name}")
+
+        # Store the current format
+        self._time_format = format_name
 
         # Update table time displays
         self.edit_shots_table.set_time_format(format_name)
@@ -228,6 +237,9 @@ class WorkflowResultsView(QWidget):
         logger.debug(f"Updating analysis data with {len(analysis_data)} items")
         self.edit_shots_table.populate_table(analysis_data)
 
+        # Ensure time format is applied after populating
+        self.edit_shots_table.set_time_format(self._time_format)
+
     def update_segments_data(self, segments_data: List[Dict[str, Any]]):
         """
         Update segments table and timeline.
@@ -239,6 +251,9 @@ class WorkflowResultsView(QWidget):
 
         # Update segments table
         self.segments_table.populate_table(segments_data)
+
+        # Ensure time format is applied after populating
+        self.segments_table.set_time_format(self._time_format)
 
         # Update timeline display
         # Determine handle frames and separator frames
@@ -313,7 +328,9 @@ class WorkflowResultsView(QWidget):
             format_name: Format name ("Timecode" or "Frames")
         """
         if format_name in ("Timecode", "Frames"):
+            self._time_format = format_name  # Store format in class
             self.time_format_combo.setCurrentText(format_name)
+            # Format will be updated through the connected signal
 
     def set_hide_unresolved(self, hide: bool):
         """
