@@ -1,3 +1,4 @@
+# gui2\services\threading_service.py
 # gui2/services/threading_service.py
 """
 Threading Service for TimelineHarvester
@@ -82,8 +83,22 @@ class Worker(QObject):
                 raise InterruptedError("Task was aborted")
             self.signals.progress.emit(percent, message)
 
-        # Add progress callback to kwargs
-        self.kwargs['progress_callback'] = progress_callback
+        # Add progress callback to kwargs if the function expects it
+        # (Check if 'progress_callback' is expected by fn if necessary)
+        try:
+            # Check if function accepts 'progress_callback' kwarg
+            import inspect
+            sig = inspect.signature(self.fn)
+            if 'progress_callback' in sig.parameters:
+                self.kwargs['progress_callback'] = progress_callback
+            else:
+                # If function doesn't accept it, remove it from kwargs to avoid TypeError
+                self.kwargs.pop('progress_callback', None)
+        except Exception as e:
+            logger.warning(f"Could not inspect function signature for task {self.task_id}: {e}. "
+                           f"Assuming 'progress_callback' is accepted.")
+            # Fallback: Assume it accepts it, might raise TypeError later if not.
+            self.kwargs['progress_callback'] = progress_callback
 
         try:
             # Call the function
@@ -274,15 +289,22 @@ class ThreadingService(QObject):
 
             # Ensure thread is stopped
             if thread.isRunning():
-                logger.warning(f"Cleaning up task {task_id} that is still running")
+                # --- CHANGE: Log level changed from WARNING to DEBUG ---
+                logger.debug(f"Cleaning up task {task_id} that is still running (will wait)")
                 thread.quit()
-                thread.wait()
+                if not thread.wait(1000):  # Wait a bit longer perhaps
+                    logger.warning(f"Thread {task_id} did not quit gracefully, forcing termination.")
+                    thread.terminate()
+                    thread.wait()  # Wait after termination
 
             # Delete the thread
             thread.deleteLater()
             del self.threads[task_id]
 
         if task_id in self.workers:
+            # Ensure worker object is cleaned up too if needed
+            # worker = self.workers[task_id]
+            # worker.deleteLater() # Might be needed if worker has complex resources
             del self.workers[task_id]
 
     def _on_task_started(self, task_id: str):
@@ -329,7 +351,7 @@ class ThreadingService(QObject):
             self.event_bus.publish(EventData(
                 event_on_result,
                 task_id=task_id,
-                result=result
+                result=result  # Keep result in event for handlers that need it
             ))
 
     def _on_task_error(

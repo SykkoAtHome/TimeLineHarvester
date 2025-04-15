@@ -1,3 +1,4 @@
+# gui2\models\ui_state_model.py
 # gui2/models/ui_state_model.py
 """
 UI State Model for TimelineHarvester
@@ -63,17 +64,29 @@ class UIStateModel(QObject):
             'color_handle_frames': 25,
             'color_separator_frames': 0,
             'color_split_threshold': -1,
+            'color_same_handles': True,  # Added from ColorPrepConfigPanel
+            'color_end_handle_frames': 25,  # Added from ColorPrepConfigPanel
 
             # Online prep state
             'online_prep_can_calculate': False,
             'online_prep_can_transcode': False,
             'online_output_directory': '',
             'online_handle_frames': 12,
+            'output_profiles': [],  # Added from StateUpdateService
 
             # Results state
             'has_analysis_results': False,
             'has_color_segments': False,
             'has_online_segments': False,
+            'analysis_data': [],  # Added from StateUpdateService
+            'color_segments_data': [],  # Added from StateUpdateService
+            'online_segments_data': [],  # Added from StateUpdateService
+            'unresolved_data': [],  # Added from StateUpdateService
+
+            # Results view state (optional, can be managed locally by view)
+            'color_results_active_tab': 0,
+            'online_results_active_tab': 0,
+
         })
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -89,9 +102,10 @@ class UIStateModel(QObject):
             value: The new value
         """
         if key not in self._state or self._state[key] != value:
-            old_value = self._state.get(key)
+            # old_value = self._state.get(key) # No longer needed for logging
             self._state[key] = value
-            logger.debug(f"UI State changed: {key} = {value} (was: {old_value})")
+            # --- CHANGE: Log only key and type ---
+            logger.debug(f"UI State changed: {key} (type: {type(value).__name__})")
             self.stateChanged.emit(key, value)
 
     def update(self, state_dict: Dict[str, Any]) -> None:
@@ -101,19 +115,22 @@ class UIStateModel(QObject):
         Args:
             state_dict: Dictionary of {key: value} pairs to update
         """
-        changed = False
+        changed_keys = []
         for key, value in state_dict.items():
             if key not in self._state or self._state[key] != value:
                 self._state[key] = value
-                changed = True
-                logger.debug(f"UI State bulk update: {key} = {value}")
+                changed_keys.append(key)
+                # --- CHANGE: Log only key and type ---
+                logger.debug(f"UI State bulk update: {key} (type: {type(value).__name__})")
 
-        if changed:
+        if changed_keys:
             self.bulkStateChanged.emit()
             # Also emit individual stateChanged signals for each changed key
             # This helps components that are listening for specific keys
-            for key, value in state_dict.items():
-                self.stateChanged.emit(key, value)
+            for key in changed_keys:
+                # Get the actual value set in the state
+                current_value = self._state.get(key)
+                self.stateChanged.emit(key, current_value)
 
     def set_busy(self, component_id: str, is_busy: bool = True) -> None:
         """

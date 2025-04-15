@@ -1,3 +1,4 @@
+# gui2\services\event_bus_service.py
 # gui2/services/event_bus_service.py
 # -*- coding: utf-8 -*-
 """
@@ -74,7 +75,16 @@ class EventData:
         self.__dict__.update(kwargs)
 
     def __str__(self):
-        attrs = ', '.join(f'{k}={v}' for k, v in self.__dict__.items() if k != 'event_type')
+        # Limit output length for potentially large data
+        MAX_ATTR_LEN = 100
+        attrs_list = []
+        for k, v in self.__dict__.items():
+            if k != 'event_type':
+                v_str = str(v)
+                if len(v_str) > MAX_ATTR_LEN:
+                    v_str = f"{v_str[:MAX_ATTR_LEN]}..."
+                attrs_list.append(f'{k}={v_str}')
+        attrs = ', '.join(attrs_list)
         return f"{self.event_type}({attrs})"
 
 
@@ -157,11 +167,12 @@ class EventBusService(QObject):
             event_data: EventData object containing event type and data
         """
         event_type = event_data.event_type
-        logger.debug(f"Publishing event: {event_data}")
+        # --- CHANGE: Log only the event type ---
+        logger.debug(f"Publishing event type: {event_type}")
         # Use Qt signal to dispatch event (ensures thread-safety if needed)
         self._eventSignal.emit(event_type, event_data)
 
-    # REMOVED: @pyqtSlot(str, object)
+    @pyqtSlot(str, object) # Keep pyqtSlot here as it's connected to a signal
     def _dispatch_event(self, event_type: str, event_data: EventData) -> None:
         """
         Internal method that dispatches events to handlers.
