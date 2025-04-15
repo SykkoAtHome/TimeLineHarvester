@@ -110,6 +110,10 @@ class UIStateModel(QObject):
 
         if changed:
             self.bulkStateChanged.emit()
+            # Also emit individual stateChanged signals for each changed key
+            # This helps components that are listening for specific keys
+            for key, value in state_dict.items():
+                self.stateChanged.emit(key, value)
 
     def set_busy(self, component_id: str, is_busy: bool = True) -> None:
         """

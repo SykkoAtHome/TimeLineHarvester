@@ -197,24 +197,42 @@ class ProjectController(QObject):
             # Dispatch based on setting type
             if setting == "edit_files":
                 self.facade.set_edit_file_paths(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "source_search_paths":
                 self.facade.set_source_search_paths(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "graded_source_paths":
                 self.facade.set_graded_source_search_paths(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "source_lookup_strategy":
                 self.facade.set_source_lookup_strategy(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "color_prep_handles":
                 # Assuming value is a tuple of (start, end)
                 if isinstance(value, tuple) and len(value) == 2:
                     self.facade.set_color_prep_handles(value[0], value[1])
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "color_prep_separator":
                 self.facade.set_color_prep_separator(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "split_gap_threshold":
                 self.facade.set_split_gap_threshold(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "output_profiles":
                 self.facade.set_output_profiles(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
             elif setting == "online_output_directory":
                 self.facade.set_online_output_directory(value)
+                # Update UI state after facade update
+                self.state_update.update_from_facade()
 
             # Mark project as dirty since a setting changed
             self.ui_state.set('project_dirty', True)
