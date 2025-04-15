@@ -1,3 +1,4 @@
+# main.py
 #!/usr/bin/env python3
 # main.py - Application entry point
 import sys
@@ -58,24 +59,59 @@ except Exception as e:
     print(f"CRITICAL ERROR: PyQt5 import error: {str(e)}", file=sys.stderr)
     sys.exit(1)
 
-# Import application modules
+# Import application modules (CORE)
 try:
-    logger.info("Importing application modules...")
+    logger.info("Importing CORE application modules...")
     from core.timeline_harvester_facade import TimelineHarvesterFacade
-    from gui.main_window import MainWindow
-
-    logger.info("Application modules imported successfully.")
+    logger.info("Core Facade imported successfully.")
 except ImportError as e:
-    logger.critical(f"CRITICAL: Failed to import application modules: {str(e)}", exc_info=True)
-    error_message = f"Failed to load application modules: {str(e)}"
+    logger.critical(f"CRITICAL: Failed to import CORE modules: {str(e)}", exc_info=True)
+    error_message = f"Failed to load CORE modules: {str(e)}"
     try:
         QMessageBox.critical(None, "Application Load Error", error_message)
     except:
         print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    logger.critical(f"CRITICAL: Unexpected error during module import: {str(e)}", exc_info=True)
-    error_message = f"Unexpected error loading application modules: {str(e)}"
+    logger.critical(f"CRITICAL: Unexpected error during CORE module import: {str(e)}", exc_info=True)
+    error_message = f"Unexpected error loading CORE modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
+
+# Import GUI2 components
+try:
+    logger.info("Importing GUI2 modules...")
+    # GUI2 Models
+    from gui2.models.ui_state_model import UIStateModel
+    # GUI2 Services
+    from gui2.services.event_bus_service import EventBusService
+    from gui2.services.dialog_service import DialogService
+    from gui2.services.state_update_service import StateUpdateService
+    from gui2.services.threading_service import ThreadingService
+    # GUI2 Controllers
+    from gui2.controllers.application_controller import ApplicationController
+    from gui2.controllers.project_controller import ProjectController
+    from gui2.controllers.workflow_controller import WorkflowController
+    # GUI2 Views
+    from gui2.views.main_window import MainWindow as MainWindowGUI2 # Alias to avoid name clash
+    from gui2.views.color_prep.color_prep_view import ColorPrepView
+    from gui2.views.online_prep.online_prep_view import OnlinePrepView
+
+    logger.info("GUI2 modules imported successfully.")
+except ImportError as e:
+    logger.critical(f"CRITICAL: Failed to import GUI2 modules: {str(e)}", exc_info=True)
+    error_message = f"Failed to load GUI2 modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    logger.critical(f"CRITICAL: Unexpected error during GUI2 module import: {str(e)}", exc_info=True)
+    error_message = f"Unexpected error loading GUI2 modules: {str(e)}"
     try:
         QMessageBox.critical(None, "Application Load Error", error_message)
     except:
@@ -96,12 +132,38 @@ def main():
     app_instance = QApplication.instance() or QApplication(sys.argv)
 
     try:
-        # Initialize core components
+        # --- Initialize Core Components ---
         harvester_core = TimelineHarvesterFacade()
         logger.info("Core Facade engine initialized")
 
-        # Create and show main window
-        window = MainWindow(harvester_core)
+        # --- Initialize GUI2 Infrastructure ---
+        logger.info("Initializing GUI2 infrastructure...")
+        # Models
+        ui_state = UIStateModel()
+        # Services
+        event_bus = EventBusService()
+        dialog_service = DialogService()
+        state_update = StateUpdateService(harvester_core, ui_state)
+        threading_service = ThreadingService(ui_state, event_bus)
+        # Controllers
+        app_controller = ApplicationController(harvester_core, event_bus, ui_state)
+        project_controller = ProjectController(harvester_core, ui_state, event_bus, state_update)
+        workflow_controller = WorkflowController(
+            harvester_core, ui_state, event_bus, state_update, dialog_service, threading_service
+        )
+        logger.info("GUI2 infrastructure initialized.")
+
+        # --- Create and show GUI2 main window ---
+        logger.info("Creating GUI2 main window...")
+        window = MainWindowGUI2(app_controller, ui_state, event_bus, dialog_service)
+        dialog_service.set_parent(window) # Important for dialogs
+
+        # --- Add actual workflow views to the workspace ---
+        # Replace placeholders in WorkspaceView
+        color_prep_view = ColorPrepView(ui_state, event_bus)
+        online_prep_view = OnlinePrepView(ui_state, event_bus)
+        window.workspace_view.replace_placeholder_tabs(color_prep_view, online_prep_view)
+
         logger.info("Main window created")
         window.show()
         logger.info("Main window displayed. Starting event loop")

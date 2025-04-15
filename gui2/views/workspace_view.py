@@ -1,4 +1,5 @@
 # gui2/views/workspace_view.py
+# -*- coding: utf-8 -*-
 """
 Workspace View for TimelineHarvester
 
@@ -13,6 +14,10 @@ from PyQt5.QtWidgets import QWidget, QTabWidget, QVBoxLayout
 
 from ..models.ui_state_model import UIStateModel
 from ..services.event_bus_service import EventBusService, EventType, EventData
+
+# Import actual workflow views
+from .color_prep.color_prep_view import ColorPrepView
+from .online_prep.online_prep_view import OnlinePrepView
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,9 @@ class WorkspaceView(QWidget):
         self.ui_state = ui_state
         self.event_bus = event_bus
 
+        self.color_prep_view: Optional[ColorPrepView] = None
+        self.online_prep_view: Optional[OnlinePrepView] = None
+
         self._init_ui()
         self._connect_signals()
 
@@ -46,20 +54,35 @@ class WorkspaceView(QWidget):
 
         # Create tab widget for different workflows
         self.tab_widget = QTabWidget()
-        self.tab_widget.setDocumentMode(True)  # More modern look
-        self.tab_widget.setTabsClosable(False)  # Tabs cannot be closed
+        self.tab_widget.setDocumentMode(True)
+        self.tab_widget.setTabsClosable(False)
 
-        # Create placeholder tabs - actual workflow views will be added later
-        # For now, we'll just add placeholder widgets
-        self.color_prep_placeholder = QWidget()
-        self.online_prep_placeholder = QWidget()
-
-        # Add tabs
-        self.tab_widget.addTab(self.color_prep_placeholder, "1. Prepare for Color Grading")
-        self.tab_widget.addTab(self.online_prep_placeholder, "2. Prepare for Online")
-
-        # Add tab widget to layout
+        # Add tab widget to layout - Tabs will be added by replace_placeholder_tabs
         main_layout.addWidget(self.tab_widget)
+
+    def replace_placeholder_tabs(self, color_prep_view: ColorPrepView, online_prep_view: OnlinePrepView):
+        """
+        Replace initial placeholder tabs with actual workflow views.
+        This method is now intended to be called from MainWindow after initialization.
+
+        Args:
+            color_prep_view: The color preparation workflow view instance.
+            online_prep_view: The online preparation workflow view instance.
+        """
+        if self.tab_widget.count() > 0:
+             logger.warning("Replacing existing tabs in WorkspaceView.")
+             # Clear existing tabs if any (shouldn't happen with current flow)
+             while self.tab_widget.count() > 0:
+                 self.tab_widget.removeTab(0)
+
+        # Store references and add actual views as tabs
+        self.color_prep_view = color_prep_view
+        self.tab_widget.addTab(self.color_prep_view, "1. Prepare for Color Grading")
+
+        self.online_prep_view = online_prep_view
+        self.tab_widget.addTab(self.online_prep_view, "2. Prepare for Online")
+
+        logger.debug("Actual workflow views added to WorkspaceView tabs.")
 
     def _connect_signals(self):
         """Connect widget signals to handlers."""
@@ -101,50 +124,3 @@ class WorkspaceView(QWidget):
             index = int(value)
             if 0 <= index < self.tab_widget.count() and self.tab_widget.currentIndex() != index:
                 self.tab_widget.setCurrentIndex(index)
-
-    def add_workflow_tab(self, widget: QWidget, title: str, index: Optional[int] = None):
-        """
-        Add or replace a workflow tab.
-
-        Args:
-            widget: The workflow widget to add
-            title: The tab title
-            index: Optional index where to insert the tab. If None, appends to the end.
-                  If the index already exists, replaces the tab at that position.
-        """
-        if index is not None and 0 <= index < self.tab_widget.count():
-            # Replace existing tab
-            old_widget = self.tab_widget.widget(index)
-            self.tab_widget.removeTab(index)
-            self.tab_widget.insertTab(index, widget, title)
-
-            # Clean up old widget if needed
-            if old_widget:
-                old_widget.deleteLater()
-        else:
-            # Add new tab
-            self.tab_widget.addTab(widget, title)
-
-    def replace_placeholder_tabs(self, color_prep_view: QWidget, online_prep_view: QWidget):
-        """
-        Replace placeholder tabs with actual workflow views.
-
-        Args:
-            color_prep_view: The color preparation workflow view
-            online_prep_view: The online preparation workflow view
-        """
-        # Replace color prep tab
-        self.add_workflow_tab(color_prep_view, "1. Prepare for Color Grading", 0)
-
-        # Replace online prep tab
-        self.add_workflow_tab(online_prep_view, "2. Prepare for Online", 1)
-
-        # Clean up placeholders
-        self.color_prep_placeholder.deleteLater()
-        self.online_prep_placeholder.deleteLater()
-
-        # Reset references
-        self.color_prep_placeholder = None
-        self.online_prep_placeholder = None
-
-        logger.debug("Placeholder tabs replaced with actual workflow views")

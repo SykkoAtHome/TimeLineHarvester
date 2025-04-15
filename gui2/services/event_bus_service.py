@@ -1,4 +1,5 @@
 # gui2/services/event_bus_service.py
+# -*- coding: utf-8 -*-
 """
 Event Bus Service for TimelineHarvester
 
@@ -9,7 +10,7 @@ without direct coupling.
 import logging
 from typing import Dict, Set, Callable
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot # Import pyqtSlot just in case needed elsewhere, but not using it here
 
 logger = logging.getLogger(__name__)
 
@@ -20,31 +21,45 @@ class EventType:
     PROJECT_LOADED = "project_loaded"
     PROJECT_SAVED = "project_saved"
     PROJECT_CLOSED = "project_closed"
-    PROJECT_MODIFIED = "project_modified"
+    PROJECT_MODIFIED = "project_modified" # Likely handled by SETTINGS_CHANGED
 
-    # Analysis events
-    ANALYSIS_STARTED = "analysis_started"
+    # --- Workflow Action Requests (UI -> Controller) ---
+    ANALYZE_SOURCES_REQUESTED = "analyze_sources_requested"
+    CALCULATE_COLOR_REQUESTED = "calculate_color_requested"
+    EXPORT_COLOR_REQUESTED = "export_color_requested"
+    CALCULATE_ONLINE_REQUESTED = "calculate_online_requested"
+    TRANSCODE_ONLINE_REQUESTED = "transcode_online_requested"
+
+    # --- Background Task Events (Controller/Service -> UI/Other) ---
+    TASK_STARTED = "task_started"
+    TASK_PROGRESS = "task_progress"
+    TASK_FINISHED = "task_finished"
+    TASK_ERROR = "task_error"
+
+    # Analysis events (Results of background task)
+    ANALYSIS_STARTED = "analysis_started" # Could use TASK_STARTED
     ANALYSIS_COMPLETED = "analysis_completed"
-    ANALYSIS_FAILED = "analysis_failed"
+    ANALYSIS_FAILED = "analysis_failed" # Could use TASK_ERROR
 
-    # Color preparation events
-    COLOR_CALCULATION_STARTED = "color_calculation_started"
+    # Color preparation events (Results of background task)
+    COLOR_CALCULATION_STARTED = "color_calculation_started" # Could use TASK_STARTED
     COLOR_CALCULATION_COMPLETED = "color_calculation_completed"
-    COLOR_CALCULATION_FAILED = "color_calculation_failed"
+    COLOR_CALCULATION_FAILED = "color_calculation_failed" # Could use TASK_ERROR
     COLOR_EXPORT_COMPLETED = "color_export_completed"
+    COLOR_EXPORT_FAILED = "color_export_failed" # Could use TASK_ERROR
 
-    # Online preparation events
-    ONLINE_CALCULATION_STARTED = "online_calculation_started"
+    # Online preparation events (Results of background task)
+    ONLINE_CALCULATION_STARTED = "online_calculation_started" # Could use TASK_STARTED
     ONLINE_CALCULATION_COMPLETED = "online_calculation_completed"
-    ONLINE_CALCULATION_FAILED = "online_calculation_failed"
-    TRANSCODE_STARTED = "transcode_started"
-    TRANSCODE_PROGRESS = "transcode_progress"
+    ONLINE_CALCULATION_FAILED = "online_calculation_failed" # Could use TASK_ERROR
+    TRANSCODE_STARTED = "transcode_started" # Could use TASK_STARTED
+    TRANSCODE_PROGRESS = "transcode_progress" # TASK_PROGRESS specific?
     TRANSCODE_COMPLETED = "transcode_completed"
-    TRANSCODE_FAILED = "transcode_failed"
+    TRANSCODE_FAILED = "transcode_failed" # Could use TASK_ERROR
 
     # UI events
     TAB_CHANGED = "tab_changed"
-    SETTINGS_CHANGED = "settings_changed"
+    SETTINGS_CHANGED = "settings_changed" # For any setting modification
 
     # General application events
     APP_READY = "app_ready"
@@ -146,14 +161,14 @@ class EventBusService(QObject):
         # Use Qt signal to dispatch event (ensures thread-safety if needed)
         self._eventSignal.emit(event_type, event_data)
 
+    # REMOVED: @pyqtSlot(str, object)
     def _dispatch_event(self, event_type: str, event_data: EventData) -> None:
         """
         Internal method that dispatches events to handlers.
         Connected to _eventSignal.
         """
         if event_type not in self._subscribers:
-            logger.debug(f"No subscribers for event type '{event_type}'")
-            return
+            return # Simply return if no subscribers
 
         # Get a copy of subscribers to handle case where handlers subscribe/unsubscribe during iteration
         subscriber_ids = list(self._subscribers[event_type])
@@ -163,7 +178,7 @@ class EventBusService(QObject):
                 try:
                     self._handlers[handler_id](event_data)
                 except Exception as e:
-                    logger.error(f"Error in event handler for '{event_type}': {e}", exc_info=True)
+                    logger.error(f"Error in event handler for '{event_type}' (handler ID: {handler_id}): {e}", exc_info=True)
 
     def clear_all_subscriptions(self) -> None:
         """Clear all subscriptions (useful during shutdown)."""
