@@ -107,6 +107,35 @@ class SegmentsTable(BaseTableWidget):
 
         logger.debug("SegmentsTable initialized")
 
+    def get_row_color(self, row_data: Dict[str, Any]) -> QColor:
+        """
+        Get the background color for a row based on its status.
+
+        Args:
+            row_data: Dictionary containing row data
+
+        Returns:
+            QColor to use for the row background
+        """
+        status = row_data.get('status', '').lower()
+
+        # Status-based colors
+        status_colors = {
+            "completed": QColor(120, 220, 120),  # Green
+            "running": QColor(120, 180, 250),  # Blue
+            "pending": QColor(200, 200, 200),  # Light gray
+            "failed": QColor(250, 120, 120),  # Red
+            "calculated": QColor(255, 255, 200),  # Light yellow
+            "default": QColor(255, 255, 255)  # White
+        }
+
+        # Check if source is verified (add special handling for missing sources)
+        if 'source_verified' in row_data and not row_data['source_verified']:
+            # Orange-ish color for segments with missing source files
+            return QColor(255, 165, 0, 127)  # Semi-transparent orange
+
+        return status_colors.get(status, status_colors["default"])
+
     def populate_table(self, data: List[Dict[str, Any]]):
         """
         Populate the table with segment data.

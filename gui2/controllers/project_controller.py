@@ -123,13 +123,32 @@ class ProjectController(QObject):
                 self.state_update.update_edit_shots_data()
                 self.state_update.update_unresolved_shots_data()
 
-                # Log more information about color segments before updating
+                # Get state for debugging
                 state = self.facade.get_project_state_snapshot()
+
+                # Log color transfer batch info
                 if state.color_transfer_batch:
-                    logger.debug(f"Color transfer batch has {len(state.color_transfer_batch.segments)} segments")
+                    num_segments = len(state.color_transfer_batch.segments)
+                    logger.debug(f"Color transfer batch has {num_segments} segments")
+
+                    # Add more detailed logging about segments
+                    if num_segments > 0:
+                        for i, segment in enumerate(state.color_transfer_batch.segments):
+                            source_verified = "verified" if (
+                                        segment.original_source and segment.original_source.is_verified) else "not verified"
+                            segment_id = segment.segment_id or f"Segment {i}"
+                            logger.debug(
+                                f"  Segment {i}: ID={segment_id}, Status={segment.status}, Source={source_verified}")
+
+                    # If there are really no segments, log this as a warning
+                    if num_segments == 0:
+                        logger.warning(
+                            "No color segments found in loaded project. Check serialization/deserialization.")
                 else:
                     logger.debug("No color transfer batch found in project")
 
+                # Update transfer segments data regardless of whether we think there are segments
+                # This ensures UI is updated even if segments exist but were not detected
                 self.state_update.update_transfer_segments_data('color')
                 self.state_update.update_transfer_segments_data('online')
 

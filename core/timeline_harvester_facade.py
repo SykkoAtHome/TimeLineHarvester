@@ -468,6 +468,16 @@ class TimelineHarvesterFacade:
             # Get the stored segment ID, fallback to basename if None/empty
             segment_identifier = seg.segment_id if seg.segment_id else source_basename
 
+            # Prepare additional fields for troubleshooting
+            source_verified = seg.original_source.is_verified if seg.original_source else False
+            has_range = seg.transfer_source_range is not None
+            error_message = seg.error_message or ""
+
+            # If source isn't verified but we have a path, indicate that in the error field
+            if not source_verified and seg.original_source and seg.original_source.path:
+                if not error_message:
+                    error_message = f"Source file not found: {os.path.basename(seg.original_source.path)}"
+
             summary.append({
                 "index": i + 1,
                 "segment_id": segment_identifier,
@@ -476,11 +486,14 @@ class TimelineHarvesterFacade:
                 "range_start_tc": tc_string,
                 "duration_sec": duration_sec,
                 "status": seg.status,
-                "error": seg.error_message or "",
+                "error": error_message,
                 # Pass frame rate and raw time objects for enhanced display
                 'frame_rate': rate,
                 'start_rt': seg.transfer_source_range.start_time if seg.transfer_source_range else None,
                 'duration_rt': seg.transfer_source_range.duration if seg.transfer_source_range else None,
+                # Additional debug fields
+                'source_verified': source_verified,
+                'has_range': has_range
                 # 'source_edit_shots': seg.source_edit_shots # Avoid passing this large list unless needed
             })
 

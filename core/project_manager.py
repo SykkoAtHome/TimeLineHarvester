@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from typing import Optional, List, Dict, Union
+from utils.path_utils import normalize_path_for_storage, normalize_path_for_system, find_matching_path
 
 import opentimelineio as otio
 from PyQt5.QtCore import QCoreApplication
@@ -138,22 +139,130 @@ class ProjectManager:
         settings.online_output_directory = config_data.get("online_output_directory")
         return settings
 
+    def _deserialize_settings(self, config_data: Dict) -> ProjectSettings:
+        """Helper to deserialize the settings part of the project data."""
+        settings = ProjectSettings()
+        # Preserve the project name determined during loading
+        settings.project_name = self.current_state.settings.project_name
+
+        settings.source_lookup_strategy = config_data.get("source_lookup_strategy", "basic_name_match")
+
+        # Normalize paths to system format when deserializing
+        settings.source_search_paths = [
+            normalize_path_for_system(path) for path in config_data.get("source_search_paths", [])
+        ]
+        settings.graded_source_search_paths = [
+            normalize_path_for_system(path) for path in config_data.get("graded_source_search_paths", [])
+        ]
+
+        loaded_profiles = []
+        profiles_data = config_data.get("output_profiles", [])
+        if isinstance(profiles_data, list):
+            for p_data in profiles_data:
+                if isinstance(p_data, dict):
+                    try:
+                        # Ensure only expected fields are passed to avoid TypeError
+                        profile = OutputProfile(
+                            name=p_data.get('name', 'Unnamed'),
+                            extension=p_data.get('extension', 'mov')
+                            # Add other fields if OutputProfile gains more attributes
+                        )
+                        loaded_profiles.append(profile)
+                    except Exception as e:
+                        logger.warning(f"Skipping invalid output profile data during load: {p_data}, Error: {e}")
+        settings.output_profiles = loaded_profiles
+
+        # Load handle settings
+        settings.color_prep_start_handles = config_data.get("color_prep_start_handles", 25)
+        # Backward compatibility: if only color_prep_handles exists, use it for both
+        if "color_prep_handles" in config_data and "color_prep_start_handles" not in config_data:
+            settings.color_prep_start_handles = config_data.get("color_prep_handles", 25)
+
+        settings.color_prep_end_handles = config_data.get("color_prep_end_handles", settings.color_prep_start_handles)
+        # Backward compatibility for linked handles
+        settings.color_same_handles = config_data.get("color_same_handles",
+                                                      settings.color_prep_start_handles == settings.color_prep_end_handles)
+
+        settings.color_prep_separator = config_data.get("color_prep_separator", 0)
+        settings.split_gap_threshold_frames = config_data.get("split_gap_threshold_frames", -1)
+        settings.online_prep_handles = config_data.get("online_prep_handles", 12)
+        settings.online_target_resolution = config_data.get("online_target_resolution")
+        settings.online_analyze_transforms = config_data.get("online_analyze_transforms", False)
+
+        # Normalize output directory path
+        online_output_dir = config_data.get("online_output_directory")
+        settings.online_output_directory = normalize_path_for_system(online_output_dir) if online_output_dir else None
+
+        return settings
+
     def _serialize_settings(self, settings: ProjectSettings) -> Dict:
         """Helper to serialize the ProjectSettings object."""
         return {
             "source_lookup_strategy": settings.source_lookup_strategy,
-            "source_search_paths": settings.source_search_paths,
-            "graded_source_search_paths": settings.graded_source_search_paths,
+            # Normalize paths for storage
+            "source_search_paths": [
+                normalize_path_for_storage(path) for path in settings.source_search_paths
+            ],
+            "graded_source_search_paths": [
+                normalize_path_for_storage(path) for path in settings.graded_source_search_paths
+            ],
             "output_profiles": [p.__dict__ for p in settings.output_profiles],
             "color_prep_start_handles": settings.color_prep_start_handles,
             "color_prep_end_handles": settings.color_prep_end_handles,
-            "color_same_handles": settings.color_same_handles, # Save linked state
+            "color_same_handles": settings.color_same_handles,  # Save linked state
             "color_prep_separator": settings.color_prep_separator,
             "split_gap_threshold_frames": settings.split_gap_threshold_frames,
             "online_prep_handles": settings.online_prep_handles,
             "online_target_resolution": settings.online_target_resolution,
             "online_analyze_transforms": settings.online_analyze_transforms,
-            "online_output_directory": settings.online_output_directory,
+            "online_output_directory": normalize_path_for_storage(
+                settings.online_output_directory) if settings.online_output_directory else None,
+        }
+
+    def _serialize_batch(self, batch: Optional[TransferBatch], all_edit_shots: List[EditShot]) -> Optional[Dict]:
+        """Helper to serialize a TransferBatch."""
+        if not batch:
+            return None
+
+        # Create map from EditShot object ID to its index in the main list
+        edit_shots_id_map = {id(shot): i for i, shot in enumerate(all_edit_shots)}
+
+        serialized_segments = []
+        for seg in batch.segments:
+            # Get indices of covered shots
+            covered_indices = [edit_shots_id_map.get(id(s_shot)) for s_shot in seg.source_edit_shots if
+                               id(s_shot) in edit_shots_id_map]
+            covered_indices = [idx for idx in covered_indices if idx is not None]  # Filter out None values
+
+            # Normalize path for storage
+            original_source_path = normalize_path_for_storage(seg.original_source.path) if seg.original_source else None
+
+            # Serialize segment data
+            serialized_segments.append({
+                "original_source_path": original_source_path,
+                "transfer_source_range": time_to_json(seg.transfer_source_range),
+                "output_targets": {k: normalize_path_for_storage(v) for k, v in seg.output_targets.items()},
+                "status": seg.status,
+                "error_message": seg.error_message,
+                "source_edit_shots_indices": covered_indices,
+                "segment_id": seg.segment_id
+            })
+
+        # Get indices of unresolved shots
+        unresolved_indices = [edit_shots_id_map.get(id(s_shot)) for s_shot in batch.unresolved_shots if
+                              id(s_shot) in edit_shots_id_map]
+        unresolved_indices = [idx for idx in unresolved_indices if idx is not None]
+
+        # Serialize batch metadata
+        return {
+            "batch_name": batch.batch_name,
+            "handle_frames": batch.handle_frames,
+            "output_directory": normalize_path_for_storage(batch.output_directory) if batch.output_directory else None,
+            "segments": serialized_segments,
+            "unresolved_shots_indices": unresolved_indices,
+            "calculation_errors": batch.calculation_errors,
+            "output_profiles_names": [p.name for p in batch.output_profiles_used],
+            "source_edit_files_paths": [normalize_path_for_storage(f.path) for f in batch.source_edit_files]
         }
 
     def _deserialize_batch(self, batch_data: Optional[Dict], stage: str, loaded_shots_map: Dict[int, EditShot],
@@ -170,17 +279,31 @@ class ProjectManager:
 
             # Determine default output directory
             default_output_dir = current_settings.online_output_directory if stage == 'online' else None
-            output_dir = batch_data.get("output_directory", default_output_dir)
+            output_dir_serialized = batch_data.get("output_directory", default_output_dir)
+            output_dir = normalize_path_for_system(output_dir_serialized) if output_dir_serialized else None
 
             # Link output profiles used by the batch
             profile_names_used = batch_data.get("output_profiles_names", [])
             profiles_used = [p for p in current_settings.output_profiles if p.name in profile_names_used]
             if len(profiles_used) != len(profile_names_used):
-                logger.warning(f"Could not find all saved output profiles ({profile_names_used}) in current config for {stage} batch.")
+                logger.warning(
+                    f"Could not find all saved output profiles ({profile_names_used}) in current config for {stage} batch.")
 
             # Link source edit files
-            source_file_paths = batch_data.get("source_edit_files_paths", [])
-            source_files = [f for f in self.current_state.edit_files if f.path in source_file_paths]
+            source_file_paths_serialized = batch_data.get("source_edit_files_paths", [])
+            source_files = []
+            for path in source_file_paths_serialized:
+                system_path = normalize_path_for_system(path)
+                found = False
+                for f in self.current_state.edit_files:
+                    if os.path.exists(f.path) and os.path.exists(system_path) and os.path.samefile(f.path, system_path):
+                        source_files.append(f)
+                        found = True
+                        break
+                if not found and os.path.exists(system_path):
+                    # File exists but not in edit_files - create a new entry
+                    new_file = EditFileMetadata(path=system_path)
+                    source_files.append(new_file)
 
             # Create the batch object
             batch = TransferBatch(
@@ -198,86 +321,144 @@ class ProjectManager:
             # Get the cache of loaded original sources
             source_cache = self.current_state.original_sources_cache
 
+            # Missing sources collection
+            missing_sources = {}
+
             # Deserialize segments
             for i, seg_data in enumerate(serialized_segments):
                 if isinstance(seg_data, dict):
-                    source_path = seg_data.get("original_source_path")
-                    original_source = source_cache.get(source_path) if source_path else None
+                    source_path_serialized = seg_data.get("original_source_path")
                     transfer_range = time_from_json(seg_data.get("transfer_source_range"))
 
+                    # Get original source from cache using universal path matching
+                    original_source = None
+                    if source_path_serialized:
+                        # Try to find a matching path in the cache
+                        matching_path = find_matching_path(source_path_serialized, source_cache)
+                        if matching_path:
+                            original_source = source_cache[matching_path]
+                        elif os.path.exists(normalize_path_for_system(source_path_serialized)):
+                            # File exists physically but not in cache - analyze it
+                            system_path = normalize_path_for_system(source_path_serialized)
+                            logger.debug(f"File exists but not in cache, analyzing: {system_path}")
+
+                            # Analyze file using FFProbeAnalyzer
+                            try:
+                                from .ffprobe_analyzer import FFProbeAnalyzer
+                                from utils import find_executable
+
+                                ffprobe_path = find_executable("ffprobe")
+                                if ffprobe_path:
+                                    analyzer = FFProbeAnalyzer(ffprobe_path)
+                                    result = analyzer.analyze(system_path)
+
+                                    if result and result.frame_rate > 0 and result.duration:
+                                        # Create new OriginalSourceFile with analysis results
+                                        original_source = OriginalSourceFile(
+                                            path=system_path,
+                                            media_type=result.media_type,
+                                            duration=result.duration,
+                                            frame_rate=result.frame_rate,
+                                            start_timecode=result.start_timecode,
+                                            is_verified=True,  # Mark as verified
+                                            metadata=result.video_stream_info.copy() if result.video_stream_info else {},
+                                            sequence_pattern=result.sequence_pattern,
+                                            sequence_frame_range=result.sequence_frame_range
+                                        )
+
+                                        # Add to cache
+                                        source_cache[system_path] = original_source
+                                        logger.info(f"Successfully analyzed and added to cache: {system_path}")
+                                    else:
+                                        logger.warning(
+                                            f"FFProbe analysis failed for {system_path}, creating placeholder")
+                                        # Create placeholder (see below)
+                                else:
+                                    logger.warning(f"FFprobe not found, cannot analyze {system_path}")
+                                    # Create placeholder (see below)
+                            except Exception as e:
+                                logger.error(f"Error analyzing file {system_path}: {e}")
+                                # Create placeholder (see below)
+
+                    # Create placeholder if needed
+                    if not original_source:
+                        # Check if we already created a placeholder for this missing source
+                        if source_path_serialized in missing_sources:
+                            original_source = missing_sources[source_path_serialized]
+                        else:
+                            # Create a placeholder OriginalSourceFile with minimal required data
+                            system_path = normalize_path_for_system(
+                                source_path_serialized) if source_path_serialized else "Unknown"
+                            logger.warning(f"Source file not found in cache, creating placeholder: {system_path}")
+
+                            # Extract frame rate from transfer_range if available
+                            frame_rate = None
+                            if isinstance(transfer_range, opentime.TimeRange):
+                                if transfer_range.start_time.rate > 0:
+                                    frame_rate = transfer_range.start_time.rate
+                                elif transfer_range.duration.rate > 0:
+                                    frame_rate = transfer_range.duration.rate
+
+                            if not frame_rate:
+                                frame_rate = 25.0  # Default fallback
+
+                            # Create placeholder OriginalSourceFile
+                            original_source = OriginalSourceFile(
+                                path=system_path,
+                                media_type=MediaType.VIDEO,  # Default assumption
+                                duration=opentime.RationalTime(1000, frame_rate),  # Placeholder duration
+                                frame_rate=frame_rate,
+                                start_timecode=opentime.RationalTime(0, frame_rate),
+                                is_verified=False  # Mark as not verified
+                            )
+
+                            # Add to missing sources collection for reuse
+                            missing_sources[source_path_serialized] = original_source
+                            # Also add to cache to maintain consistency
+                            source_cache[system_path] = original_source
+
                     # Validate segment data
-                    if not original_source or not isinstance(transfer_range, opentime.TimeRange):
-                        msg = f"Segment {i} load error: Missing source link ('{source_path}') or invalid range."
+                    if not isinstance(transfer_range, opentime.TimeRange):
+                        msg = f"Segment {i} load error: Invalid transfer range."
                         logger.warning(msg)
                         batch.calculation_errors.append(msg)
                         continue
 
                     # Link source edit shots
                     covered_shots_indices = seg_data.get("source_edit_shots_indices", [])
-                    covered_shots = [loaded_shots_map.get(idx) for idx in covered_shots_indices if idx in loaded_shots_map]
+                    covered_shots = [loaded_shots_map.get(idx) for idx in covered_shots_indices if
+                                     idx in loaded_shots_map]
+
+                    # Normalize output target paths
+                    output_targets_serialized = seg_data.get("output_targets", {})
+                    output_targets = {k: normalize_path_for_system(v) for k, v in output_targets_serialized.items()}
 
                     # Create TransferSegment, including segment_id
                     segment = TransferSegment(
                         original_source=original_source,
                         transfer_source_range=transfer_range,
-                        output_targets=seg_data.get("output_targets", {}),
+                        output_targets=output_targets,
                         status=seg_data.get("status", "calculated"),
                         error_message=seg_data.get("error_message"),
                         source_edit_shots=covered_shots,
-                        # --- ADDED: Load segment_id ---
-                        segment_id=seg_data.get("segment_id") # Use .get for backward compatibility
+                        segment_id=seg_data.get("segment_id")  # Use .get for backward compatibility
                     )
+
+                    # If source is missing, update segment status
+                    if not original_source.is_verified:
+                        segment.status = "pending"
+                        segment.error_message = f"Original source file not found or not verified: {os.path.basename(original_source.path)}"
+
                     batch.segments.append(segment)
 
             # Link unresolved shots
-            batch.unresolved_shots = [loaded_shots_map.get(idx) for idx in unresolved_indices if idx in loaded_shots_map]
+            batch.unresolved_shots = [loaded_shots_map.get(idx) for idx in unresolved_indices if
+                                      idx in loaded_shots_map]
 
             return batch
         except Exception as e:
             logger.error(f"Error deserializing {stage} batch: {e}", exc_info=True)
             return None
-
-    def _serialize_batch(self, batch: Optional[TransferBatch], all_edit_shots: List[EditShot]) -> Optional[Dict]:
-        """Helper to serialize a TransferBatch."""
-        if not batch:
-            return None
-
-        # Create map from EditShot object ID to its index in the main list
-        edit_shots_id_map = {id(shot): i for i, shot in enumerate(all_edit_shots)}
-
-        serialized_segments = []
-        for seg in batch.segments:
-            # Get indices of covered shots
-            covered_indices = [edit_shots_id_map.get(id(s_shot)) for s_shot in seg.source_edit_shots if id(s_shot) in edit_shots_id_map]
-            covered_indices = [idx for idx in covered_indices if idx is not None] # Filter out None values
-
-            # Serialize segment data
-            serialized_segments.append({
-                "original_source_path": seg.original_source.path if seg.original_source else None,
-                "transfer_source_range": time_to_json(seg.transfer_source_range),
-                "output_targets": seg.output_targets,
-                "status": seg.status,
-                "error_message": seg.error_message,
-                "source_edit_shots_indices": covered_indices,
-                 # --- ADDED: Save segment_id ---
-                "segment_id": seg.segment_id
-            })
-
-        # Get indices of unresolved shots
-        unresolved_indices = [edit_shots_id_map.get(id(s_shot)) for s_shot in batch.unresolved_shots if id(s_shot) in edit_shots_id_map]
-        unresolved_indices = [idx for idx in unresolved_indices if idx is not None]
-
-        # Serialize batch metadata
-        return {
-            "batch_name": batch.batch_name,
-            "handle_frames": batch.handle_frames,
-            "output_directory": batch.output_directory,
-            "segments": serialized_segments,
-            "unresolved_shots_indices": unresolved_indices,
-            "calculation_errors": batch.calculation_errors,
-            "output_profiles_names": [p.name for p in batch.output_profiles_used],
-            "source_edit_files_paths": [f.path for f in batch.source_edit_files]
-        }
 
     def load_project(self, file_path: str) -> bool:
         """Loads project state from a JSON file into the manager."""
@@ -414,6 +595,9 @@ class ProjectManager:
             logger.error("Cannot save project: No file path specified for a new project.")
             return False
 
+        # Normalize save path using system format
+        save_path = normalize_path_for_system(save_path)
+
         logger.info(f"Saving project state to: {save_path}")
         try:
             # Ensure project name in settings matches save path base name
@@ -424,7 +608,12 @@ class ProjectManager:
                 "app_version": QCoreApplication.applicationVersion(),
                 "project_name": self.current_state.settings.project_name,
                 "config": self._serialize_settings(self.current_state.settings),
-                "edit_files": [{'path': f.path, 'format': f.format_type} for f in self.current_state.edit_files],
+                "edit_files": [
+                    {
+                        'path': normalize_path_for_storage(f.path),
+                        'format': f.format_type
+                    } for f in self.current_state.edit_files
+                ],
                 "analysis_results": {
                     "edit_shots": [
                         {
