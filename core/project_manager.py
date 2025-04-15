@@ -630,7 +630,7 @@ class ProjectManager:
                     "original_sources_cache": {
                         path: {
                             "path": src.path,
-                            "media_type": src.media_type.name if src.media_type else MediaType.UNKNOWN.name, # Save media type name
+                            "media_type": src.media_type.name if src.media_type else MediaType.UNKNOWN.name,
                             "duration": time_to_json(src.duration),
                             "frame_rate": src.frame_rate,
                             "start_timecode": time_to_json(src.start_timecode),
