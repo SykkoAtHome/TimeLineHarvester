@@ -131,6 +131,9 @@ class WorkflowResultsView(QWidget):
             self.event_bus.subscribe(EventType.TRANSCODE_PROGRESS, self._on_transcode_progress)
             self.event_bus.subscribe(EventType.TRANSCODE_COMPLETED, self._on_transcode_completed)
 
+        # Connect to tab widget signals
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+
     @pyqtSlot(str)
     def _on_time_format_changed(self, format_name: str):
         """Handle time format change."""
@@ -148,6 +151,15 @@ class WorkflowResultsView(QWidget):
 
         # Update edit shots table filter
         self.edit_shots_table.set_hide_unresolved(hide)
+
+    @pyqtSlot(int)
+    def _on_tab_changed(self, index: int):
+        """Handle tab change."""
+        logger.debug(f"Results tab changed to index {index}")
+
+        # Save current tab in UI state if needed
+        tab_key = f"{self.workflow}_results_active_tab"
+        self.ui_state.set(tab_key, index)
 
     def _on_ui_state_changed(self, key: str, value: Any, data_key_prefix: str):
         """
@@ -169,6 +181,12 @@ class WorkflowResultsView(QWidget):
             self.update_segments_data(value)
         elif key == unresolved_data_key and value:
             self.update_unresolved_data(value)
+
+        # Check for tab change
+        tab_key = f"{self.workflow}_results_active_tab"
+        if key == tab_key and isinstance(value, int):
+            if 0 <= value < self.tab_widget.count() and self.tab_widget.currentIndex() != value:
+                self.tab_widget.setCurrentIndex(value)
 
     @pyqtSlot(EventData)
     def _on_analysis_completed(self, event_data: EventData):
@@ -274,3 +292,53 @@ class WorkflowResultsView(QWidget):
         """
         logger.debug(f"Updating unresolved data with {len(unresolved_data)} items")
         self.unresolved_table.populate_table(unresolved_data)
+
+    def clear_results(self):
+        """Clear all result displays."""
+        logger.debug("Clearing all result displays")
+
+        # Clear tables
+        self.edit_shots_table.clear()
+        self.segments_table.clear()
+        self.unresolved_table.clear()
+
+        # Clear timeline
+        self.timeline_widget.clear()
+
+    def set_time_format(self, format_name: str):
+        """
+        Set the time display format.
+
+        Args:
+            format_name: Format name ("Timecode" or "Frames")
+        """
+        if format_name in ("Timecode", "Frames"):
+            self.time_format_combo.setCurrentText(format_name)
+
+    def set_hide_unresolved(self, hide: bool):
+        """
+        Set whether to hide unresolved items.
+
+        Args:
+            hide: Whether to hide unresolved items
+        """
+        self.hide_unresolved_checkbox.setChecked(hide)
+
+    def get_current_tab_index(self) -> int:
+        """
+        Get the index of the currently active tab.
+
+        Returns:
+            Current tab index
+        """
+        return self.tab_widget.currentIndex()
+
+    def set_current_tab(self, index: int):
+        """
+        Set the current tab.
+
+        Args:
+            index: Tab index to set active
+        """
+        if 0 <= index < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(index)
