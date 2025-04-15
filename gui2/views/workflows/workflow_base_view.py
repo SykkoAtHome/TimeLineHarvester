@@ -180,8 +180,13 @@ class WorkflowBaseView(QWidget):
     @pyqtSlot(EventData)
     def _on_project_loaded(self, event_data: EventData):
         """Handle project loaded event."""
-        # Clear view when a new project is loaded
-        self.clear_view()
+        # Check if this is a loaded project (has a path) or a new one
+        project_path = getattr(event_data, 'project_path', None)
+        is_new_project = project_path is None
+
+        # Only clear view when a new project is created, not when loading an existing one
+        if is_new_project:
+            self.clear_view()
 
         # Update from current UI state
         self._update_from_ui_state()

@@ -119,6 +119,12 @@ class ProjectController(QObject):
                 # Update UI state
                 self.state_update.update_from_facade()
 
+                # Explicitly update analysis results and segments data
+                self.state_update.update_edit_shots_data()
+                self.state_update.update_unresolved_shots_data()
+                self.state_update.update_transfer_segments_data('color')
+                self.state_update.update_transfer_segments_data('online')
+
                 # Publish event
                 self.event_bus.publish(EventData(
                     EventType.PROJECT_LOADED,
