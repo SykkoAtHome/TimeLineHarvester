@@ -264,3 +264,13 @@ class WorkflowResultsView(QWidget):
 
         # Update timeline with data
         self.timeline_widget.update_timeline(timeline_data, separator_frames)
+
+    def update_unresolved_data(self, unresolved_data: List[Dict[str, Any]]):
+        """
+        Update unresolved items table.
+
+        Args:
+            unresolved_data: Unresolved items data from facade
+        """
+        logger.debug(f"Updating unresolved data with {len(unresolved_data)} items")
+        self.unresolved_table.populate_table(unresolved_data)
