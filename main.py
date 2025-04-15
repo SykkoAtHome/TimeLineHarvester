@@ -31,7 +31,7 @@ logger.info(f"Python Version: {sys.version}")
 logger.info(f"App Directory: {app_dir}")
 logger.info(f"Logging to file: {log_file_path}")
 
-# Import OpenTimelineIO first to ensure it's available
+# Import OpenTimelineIO first to ensure it's available and will not crash PyQt
 try:
     logger.info("Importing opentimelineio...")
     import opentimelineio as otio
