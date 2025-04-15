@@ -1,118 +1,197 @@
+# main.py
+#!/usr/bin/env python3
+# main.py - Application entry point
 import sys
 import logging
 import os
 
-# --- Determine App Directory FIRST ---
+from core.about import TLH_VERSION
+
+# Determine application directory
 if getattr(sys, 'frozen', False):
-    # If running as a bundled app (e.g., PyInstaller)
     app_dir = os.path.dirname(sys.executable)
 else:
-    # If running as a script
     app_dir = os.path.dirname(os.path.abspath(__file__))
 
-# --- Logging Setup ---
-log_file_path = os.path.join(app_dir, "timelineharvester_MAIN_ImportOrderTest.log") # Use a distinct log file name
+# Configure logging
+log_file_path = os.path.join(app_dir, "timelineharvester.log")
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - [%(module)s.%(funcName)s] %(message)s',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - [%(name)s.%(funcName)s] %(message)s',
     handlers=[
-        logging.FileHandler(log_file_path, mode='w', encoding='utf-8'), # Overwrite log for test
+        logging.FileHandler(log_file_path, mode='w', encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
-logger = logging.getLogger("TimelineHarvesterApp") # Use main logger name
+logger = logging.getLogger("main")
+
 logger.info("-" * 50)
-logger.info("--- Starting TimelineHarvester Application (Full - Import Order Test) ---")
+logger.info("Starting TimelineHarvester application")
 logger.info(f"Python Version: {sys.version}")
-logger.info(f"Application Directory: {app_dir}") # Log the determined directory
+logger.info(f"App Directory: {app_dir}")
 logger.info(f"Logging to file: {log_file_path}")
 
-
-# --- SWAPPED IMPORT ORDER ---
-modules_loaded = True
-module_error_message = ""
-has_pyqt = False # Assume False initially
-
+# Import OpenTimelineIO first to ensure it's available
 try:
-    # --- Try importing Core/GUI FIRST ---
-    logger.info("Attempting to import Core and GUI modules FIRST...")
-    from core.timeline_harvester import TimelineHarvester
-    from gui.main_window import MainWindow
-    logger.info("Core and GUI modules imported successfully.")
-except ImportError as e:
-    logger.critical(f"CRITICAL: Failed to import core or GUI modules: {str(e)}", exc_info=True)
-    modules_loaded = False
-    module_error_message = f"Failed to load application modules:\n\n{str(e)}" # ... rest of message
+    logger.info("Importing opentimelineio...")
+    import opentimelineio as otio
+    from opentimelineio import opentime
+
+    logger.info(f"OpenTimelineIO import successful. Version: {otio.__version__}")
 except Exception as e:
-     logger.critical(f"CRITICAL: Unexpected error during core/GUI import: {str(e)}", exc_info=True)
-     modules_loaded = False
-     module_error_message = f"Unexpected error loading application modules:\n\n{str(e)}" # ... rest of message
+    logger.critical(f"CRITICAL: Failed to import OpenTimelineIO: {e}", exc_info=True)
+    print(f"CRITICAL ERROR: Failed to load OpenTimelineIO. Cannot continue.", file=sys.stderr)
+    sys.exit(1)  # Exit early if essential OTIO fails
 
-# --- Import PyQt5 SECOND ---
+# Import PyQt5
 try:
-    logger.info("Attempting to import PyQt5 SECOND...")
+    logger.info("Importing PyQt5...")
     from PyQt5.QtWidgets import QApplication, QMessageBox
-    from PyQt5.QtCore import qVersion
+    from PyQt5.QtCore import qVersion, QCoreApplication, Qt
+
     logger.info(f"PyQt5 imported successfully. Qt Version: {qVersion()}")
-    has_pyqt = True # Mark PyQt as loaded successfully
 except ImportError as e:
-    logger.critical(f"CRITICAL: Failed to import PyQt5 (even second): {str(e)}.", exc_info=True)
-    # Update error message ONLY if core/gui loaded successfully before
-    if modules_loaded:
-         module_error_message = f"Failed to import PyQt5:\n\n{str(e)}"
-    modules_loaded = False # Mark overall loading as failed if Qt fails
+    logger.critical(f"CRITICAL: Failed to import PyQt5: {str(e)}", exc_info=True)
+    print(f"CRITICAL ERROR: Failed to import PyQt5: {str(e)}", file=sys.stderr)
+    sys.exit(1)
 except Exception as e:
-    logger.critical(f"CRITICAL: Unexpected error during PyQt5 import (second attempt): {str(e)}", exc_info=True)
-    if modules_loaded:
-         module_error_message = f"Unexpected error during PyQt5 import:\n\n{str(e)}"
-    modules_loaded = False
+    logger.critical(f"CRITICAL: Unexpected error during PyQt5 import: {str(e)}", exc_info=True)
+    print(f"CRITICAL ERROR: PyQt5 import error: {str(e)}", file=sys.stderr)
+    sys.exit(1)
+
+# Import application modules (CORE)
+try:
+    logger.info("Importing CORE application modules...")
+    from core.timeline_harvester_facade import TimelineHarvesterFacade
+    logger.info("Core Facade imported successfully.")
+except ImportError as e:
+    logger.critical(f"CRITICAL: Failed to import CORE modules: {str(e)}", exc_info=True)
+    error_message = f"Failed to load CORE modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    logger.critical(f"CRITICAL: Unexpected error during CORE module import: {str(e)}", exc_info=True)
+    error_message = f"Unexpected error loading CORE modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
+
+# Import GUI2 components
+try:
+    logger.info("Importing GUI2 modules...")
+    # GUI2 Models
+    from gui2.models.ui_state_model import UIStateModel
+    # GUI2 Services
+    from gui2.services.event_bus_service import EventBusService
+    from gui2.services.dialog_service import DialogService
+    from gui2.services.state_update_service import StateUpdateService
+    from gui2.services.threading_service import ThreadingService
+    # GUI2 Controllers
+    from gui2.controllers.application_controller import ApplicationController
+    from gui2.controllers.project_controller import ProjectController
+    from gui2.controllers.workflow_controller import WorkflowController
+    # GUI2 Views
+    from gui2.views.main_window import MainWindow as MainWindowGUI2 # Alias to avoid name clash
+    from gui2.views.color_prep.color_prep_view import ColorPrepView
+    from gui2.views.online_prep.online_prep_view import OnlinePrepView
+
+    logger.info("GUI2 modules imported successfully.")
+except ImportError as e:
+    logger.critical(f"CRITICAL: Failed to import GUI2 modules: {str(e)}", exc_info=True)
+    error_message = f"Failed to load GUI2 modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
+except Exception as e:
+    logger.critical(f"CRITICAL: Unexpected error during GUI2 module import: {str(e)}", exc_info=True)
+    error_message = f"Unexpected error loading GUI2 modules: {str(e)}"
+    try:
+        QMessageBox.critical(None, "Application Load Error", error_message)
+    except:
+        print(f"CRITICAL ERROR: {error_message}", file=sys.stderr)
+    sys.exit(1)
 
 
-# --- Main Application Function ---
 def main():
-    # --- Crucial: Create QApplication AFTER importing PyQt ---
-    # It might rely on things set up during import.
-    # Check if PyQt actually loaded before creating QApplication
-    if not has_pyqt:
-         logger.critical("PyQt5 failed to load. Cannot start GUI application.")
-         print("CRITICAL ERROR: PyQt5 failed to load. Cannot start GUI application.", file=sys.stderr)
-         # Print previous error if available
-         if module_error_message:
-             print(module_error_message, file=sys.stderr)
-         return 1
+    """Main application entry point."""
+    logger.info("Main function started")
 
+    # Set application attributes
+    QCoreApplication.setOrganizationName("TimelineHarvesterOrg")
+    QCoreApplication.setApplicationName("TimelineHarvester")
+    QCoreApplication.setApplicationVersion(TLH_VERSION)
+
+    # Create QApplication
     app_instance = QApplication.instance() or QApplication(sys.argv)
 
-    if not modules_loaded:
-        # ... (Error handling for module loading failure) ...
-        logger.error(f"Modules failed to load. Error:\n{module_error_message}")
-        try: QMessageBox.critical(None, "Module Load Error", module_error_message)
-        except Exception as msg_err: print(f"CRITICAL ERROR: {module_error_message}", file=sys.stderr); print(f"(Could not display GUI error message: {msg_err})", file=sys.stderr)
-        return 1
-
-    logger.info("Initializing application components...")
-    app_instance.setApplicationName("TimelineHarvester")
-    app_instance.setApplicationVersion("1.0.0")
-
     try:
-        harvester = TimelineHarvester()
-        logger.info("Core TimelineHarvester engine initialized.")
-        window = MainWindow(harvester)
-        logger.info("Main application window created.")
+        # --- Initialize Core Components ---
+        harvester_core = TimelineHarvesterFacade()
+        logger.info("Core Facade engine initialized")
+
+        # --- Initialize GUI2 Infrastructure ---
+        logger.info("Initializing GUI2 infrastructure...")
+        # Models
+        ui_state = UIStateModel()
+        # Services
+        event_bus = EventBusService()
+        dialog_service = DialogService()
+        state_update = StateUpdateService(harvester_core, ui_state)
+        threading_service = ThreadingService(ui_state, event_bus)
+        # Controllers
+        app_controller = ApplicationController(harvester_core, event_bus, ui_state)
+        project_controller = ProjectController(harvester_core, ui_state, event_bus, state_update)
+        workflow_controller = WorkflowController(
+            harvester_core, ui_state, event_bus, state_update, dialog_service, threading_service
+        )
+        logger.info("GUI2 infrastructure initialized.")
+
+        # --- Create and show GUI2 main window ---
+        logger.info("Creating GUI2 main window...")
+        window = MainWindowGUI2(app_controller, ui_state, event_bus, dialog_service)
+        dialog_service.set_parent(window) # Important for dialogs
+
+        # --- Add actual workflow views to the workspace ---
+        # Replace placeholders in WorkspaceView
+        color_prep_view = ColorPrepView(ui_state, event_bus)
+        online_prep_view = OnlinePrepView(ui_state, event_bus)
+        window.workspace_view.replace_placeholder_tabs(color_prep_view, online_prep_view)
+
+        logger.info("Main window created")
         window.show()
-        logger.info("Main window displayed. Starting Qt event loop.")
+        logger.info("Main window displayed. Starting event loop")
+
+        # Start application event loop
         exit_code = app_instance.exec_()
-        logger.info(f"Application event loop finished. Exit code: {exit_code}")
+        logger.info(f"Event loop finished. Exit code: {exit_code}")
         return exit_code
     except Exception as e:
-        # ... (Runtime error handling as before) ...
-        logger.critical(f"Unhandled exception during runtime: {str(e)}", exc_info=True)
-        try: QMessageBox.critical(None, "Critical Runtime Error", f"An unexpected error occurred:\n\n{str(e)}\n\nSee log:\n{log_file_path}")
-        except: print(f"CRITICAL ERROR: {e}. Cannot show GUI.", file=sys.stderr)
+        logger.critical(f"Unhandled runtime exception: {str(e)}", exc_info=True)
+        try:
+            QMessageBox.critical(None, "Critical Runtime Error",
+                                 f"An unexpected error occurred:\n\n{str(e)}\n\n"
+                                 f"See log:\n{log_file_path}")
+        except Exception as msg_err:
+            print(f"CRITICAL RUNTIME ERROR: {e}. Cannot show GUI error message: {msg_err}", file=sys.stderr)
+            print(f"Log file: {log_file_path}", file=sys.stderr)
         return 1
 
-# --- Script Execution Guard ---
+
 if __name__ == "__main__":
+    # Configure high DPI scaling
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'):
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     exit_status = main()
-    logger.info(f"--- TimelineHarvester Application Exiting (Status: {exit_status}) ---")
+    logger.info(f"Application exiting with status: {exit_status}")
+    logging.shutdown()
     sys.exit(exit_status)

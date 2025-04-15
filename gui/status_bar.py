@@ -10,9 +10,10 @@ import logging
 from typing import Optional
 
 from PyQt5.QtWidgets import QStatusBar, QProgressBar, QLabel
-from PyQt5.QtCore import QTimer, Qt # Import QTimer and Qt namespace
+from PyQt5.QtCore import QTimer, Qt  # Import QTimer and Qt namespace
 
 logger = logging.getLogger(__name__)
+
 
 class StatusBarManager:
     """
@@ -31,24 +32,24 @@ class StatusBarManager:
             raise TypeError("StatusBarManager requires a QStatusBar instance.")
 
         self.status_bar = status_bar
-        self._persistent_message = "Ready" # Store the last non-temporary message
+        self._persistent_message = "Ready"  # Store the last non-temporary message
 
         # --- Permanent Widgets ---
         # Status message label (takes available space)
         self.status_label = QLabel(self._persistent_message)
-        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter) # Align left
-        self.status_bar.addWidget(self.status_label, 1) # Stretch factor 1
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # Align left
+        self.status_bar.addWidget(self.status_label, 1)  # Stretch factor 1
 
         # Progress bar (aligned right, fixed width)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(False) # Initially hide percentage text
-        self.progress_bar.setMaximumWidth(200)   # Set a max width
+        self.progress_bar.setTextVisible(False)  # Initially hide percentage text
+        self.progress_bar.setMaximumWidth(200)  # Set a max width
         self.progress_bar.setAlignment(Qt.AlignCenter)
         # Add as permanent widget - appears on the right
         self.status_bar.addPermanentWidget(self.progress_bar)
-        self.progress_bar.hide() # Hide initially
+        self.progress_bar.hide()  # Hide initially
 
         logger.info("StatusBarManager initialized.")
 
@@ -86,15 +87,15 @@ class StatusBarManager:
         is_indeterminate = (maximum == 0)
 
         self.progress_bar.setRange(0, maximum)
-        self.progress_bar.setValue(value if not is_indeterminate else 0) # Value ignored if indeterminate
-        self.progress_bar.setTextVisible(text is not None or not is_indeterminate) # Visible if text or determinate
+        self.progress_bar.setValue(value if not is_indeterminate else 0)  # Value ignored if indeterminate
+        self.progress_bar.setTextVisible(text is not None or not is_indeterminate)  # Visible if text or determinate
 
         if text is not None:
             self.progress_bar.setFormat(text)
         elif is_indeterminate:
-            self.progress_bar.setFormat("") # No text for indeterminate
+            self.progress_bar.setFormat("")  # No text for indeterminate
         else:
-            self.progress_bar.setFormat("%p%") # Show percentage
+            self.progress_bar.setFormat("%p%")  # Show percentage
 
         if not self.progress_bar.isVisible():
             self.progress_bar.show()
@@ -105,7 +106,7 @@ class StatusBarManager:
         """Hides the progress bar and resets its state."""
         if self.progress_bar.isVisible():
             self.progress_bar.hide()
-            self.progress_bar.reset() # Resets range, value, format
+            self.progress_bar.reset()  # Resets range, value, format
             self.progress_bar.setTextVisible(False)
             logger.debug("Progress bar hidden and reset.")
 
@@ -120,14 +121,14 @@ class StatusBarManager:
         """
         if busy:
             busy_msg = message or "Processing..."
-            self.set_status(busy_msg, temporary=False) # Set persistent busy message
-            self.show_progress(0, 0) # Show indeterminate progress
+            self.set_status(busy_msg, temporary=False)  # Set persistent busy message
+            self.show_progress(0, 0)  # Show indeterminate progress
             logger.info(f"Status set to busy: {busy_msg}")
         else:
-            idle_msg = message or self._persistent_message # Restore last persistent or use provided
+            idle_msg = message or self._persistent_message  # Restore last persistent or use provided
             # If last persistent was also a busy message, default to "Ready."
             if idle_msg.lower().startswith("processing") or idle_msg.lower().startswith("starting"):
                 idle_msg = "Ready."
             self.hide_progress()
-            self.set_status(idle_msg, temporary=False) # Set persistent idle message
+            self.set_status(idle_msg, temporary=False)  # Set persistent idle message
             logger.info(f"Status set to ready: {idle_msg}")

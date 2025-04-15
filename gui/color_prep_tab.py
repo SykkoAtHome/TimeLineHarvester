@@ -1,4 +1,4 @@
-# gui/color_prep_tab.py
+# gui/color_prep_tab.py (modified to use EnhancedResultsDisplayWidget)
 """
 Widget managing the Color Grading Preparation stage UI and actions.
 """
@@ -10,14 +10,20 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QGroupBox, QSpinBox, QCheckBox, QLabel,
                              QPushButton, QSplitter)
 
-# Import the reusable results display
-from .results_display import ResultsDisplayWidget
+# Import the enhanced results display
+from .enhanced_results_display import EnhancedResultsDisplayWidget
 
 logger = logging.getLogger(__name__)
 
 
 class ColorPrepTabWidget(QWidget):
-    """Widget managing the Color Grading Preparation stage."""
+    """
+    Widget managing the Color Grading Preparation stage.
+
+    Provides UI for configuring color grading preparation settings, including
+    handle frames, separator gaps, and split thresholds. Also includes controls
+    to analyze sources, calculate segments, and export EDL/XML.
+    """
     # Signals emitted to MainWindow to trigger actions or indicate changes
     settingsChanged = pyqtSignal()
     analyzeSourcesClicked = pyqtSignal()
@@ -25,31 +31,50 @@ class ColorPrepTabWidget(QWidget):
     exportEdlXmlClicked = pyqtSignal()
 
     def __init__(self, harvester_instance, parent=None):
+        """
+        Initialize the ColorPrepTabWidget.
+
+        Args:
+            harvester_instance: Instance of the harvester (currently unused but kept for compatibility)
+            parent: Parent widget
+        """
         super().__init__(parent)
-        # self.harvester = harvester_instance # Store harvester if needed directly, maybe not
+
+        # Initialize instance variables
+        self.start_handles_spin = None
+        self.end_handles_spin = None
+        self.same_handles_check = None
+        self.separator_spin = None
+        self.split_gap_spin = None
+        self.analyze_button = None
+        self.calculate_button = None
+        self.export_button = None
+        self.results_widget = None
+
         self.init_ui()
         self.connect_signals()
         logger.info("ColorPrepTabWidget initialized.")
 
     def init_ui(self):
+        """Initialize the user interface components."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 5, 5, 5)  # Padding around the tab content
+        main_layout.setContentsMargins(5, 5, 5, 5)
         splitter = QSplitter(Qt.Vertical)
         main_layout.addWidget(splitter)
 
-        # --- Top part: Settings & Actions ---
+        # Top part: Settings & Actions
         top_widget = QWidget()
         top_layout = QVBoxLayout(top_widget)
         top_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Settings Group ---
+        # Settings Group
         settings_group = QGroupBox("Color Prep Settings")
         settings_form_layout = QFormLayout(settings_group)
         settings_form_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
-        # --- Handle Frames Settings ---
+        # Handle Frames Settings
         start_handle_layout = QHBoxLayout()
-        self.start_handles_spin = QSpinBox(minimum=0, maximum=10000, value=24)  # Removed suffix for cleaner get/set
+        self.start_handles_spin = QSpinBox(minimum=0, maximum=10000, value=25)
         self.start_handles_spin.setToolTip("Frames added before each segment")
         self.start_handles_spin.setFixedWidth(100)
         start_handle_layout.addWidget(self.start_handles_spin)
@@ -58,7 +83,7 @@ class ColorPrepTabWidget(QWidget):
         settings_form_layout.addRow("Start Handles:", start_handle_layout)
 
         end_handle_layout = QHBoxLayout()
-        self.end_handles_spin = QSpinBox(minimum=0, maximum=10000, value=24, enabled=False)
+        self.end_handles_spin = QSpinBox(minimum=0, maximum=10000, value=25, enabled=False)
         self.end_handles_spin.setToolTip("Frames added after each segment")
         self.end_handles_spin.setFixedWidth(100)
         end_handle_layout.addWidget(self.end_handles_spin)
@@ -69,7 +94,7 @@ class ColorPrepTabWidget(QWidget):
         self.same_handles_check = QCheckBox("Use same value for End Handles", checked=True)
         settings_form_layout.addRow("", self.same_handles_check)
 
-        # --- Separator Setting ---
+        # Separator Setting
         separator_layout = QHBoxLayout()
         self.separator_spin = QSpinBox(minimum=0, maximum=1000, value=0)
         self.separator_spin.setToolTip("Insert black gap of this duration between segments in the exported EDL/XML.")
@@ -79,12 +104,13 @@ class ColorPrepTabWidget(QWidget):
         separator_layout.addStretch()
         settings_form_layout.addRow("Segment Separator Gap:", separator_layout)
 
-        # --- Split Gap Threshold Setting ---
+        # Split Gap Threshold Setting
         split_gap_layout = QHBoxLayout()
-        self.split_gap_spin = QSpinBox(minimum=-1, maximum=99999, value=-1)  # Allow -1 for disabled
+        self.split_gap_spin = QSpinBox(minimum=-1, maximum=99999, value=-1)
         self.split_gap_spin.setToolTip(
-            "Split segments if the gap between them (after handles) exceeds this many frames.\nSet to -1 to disable splitting.")
-        self.split_gap_spin.setSpecialValueText("Disabled")  # Show text for -1
+            "Split segments if the gap between them (after handles) exceeds this many frames.\n"
+            "Set to -1 to disable splitting.")
+        self.split_gap_spin.setSpecialValueText("Disabled")
         self.split_gap_spin.setFixedWidth(100)
         split_gap_layout.addWidget(self.split_gap_spin)
         split_gap_layout.addWidget(QLabel("frames"))
@@ -93,7 +119,7 @@ class ColorPrepTabWidget(QWidget):
 
         top_layout.addWidget(settings_group)
 
-        # --- Action Buttons ---
+        # Action Buttons
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 10, 0, 0)
         self.analyze_button = QPushButton("1. Analyze Sources")
@@ -110,117 +136,172 @@ class ColorPrepTabWidget(QWidget):
 
         splitter.addWidget(top_widget)
 
-        # --- Bottom part: Results Display ---
-        self.results_widget = ResultsDisplayWidget()
-        # Configure columns for color prep (hide transcode status/error)
-        try:
-            # Assume standard indices if names change
-            # Index 4: "Transcode Status", Index 5: "Error / Notes"
-            self.results_widget.segments_table.setColumnHidden(4, True)
-            self.results_widget.segments_table.setColumnHidden(5, True)
-        except Exception as e:
-            logger.warning(f"Could not hide columns in segments table: {e}")
+        # Bottom part: Enhanced Results Display
+        self.results_widget = EnhancedResultsDisplayWidget()
         splitter.addWidget(self.results_widget)
-
-        splitter.setSizes([200, 500])  # Adjust initial sizes if needed
+        splitter.setSizes([200, 500])
 
     def connect_signals(self):
+        """Connect widget signals to their handlers."""
         # Connect internal UI elements
         self.same_handles_check.stateChanged.connect(self._update_handles_state)
         self.start_handles_spin.valueChanged.connect(self._update_end_handles_if_linked)
+        self.separator_spin.valueChanged.connect(self._update_separator_value)
 
         # Emit settingsChanged when relevant values change
         self.start_handles_spin.valueChanged.connect(self._emit_settings_changed)
         self.end_handles_spin.valueChanged.connect(self._emit_settings_changed)
         self.same_handles_check.stateChanged.connect(self._emit_settings_changed)
         self.separator_spin.valueChanged.connect(self._emit_settings_changed)
-        self.split_gap_spin.valueChanged.connect(self._emit_settings_changed)  # Connect new spinbox
+        self.split_gap_spin.valueChanged.connect(self._emit_settings_changed)
 
         # Connect action buttons to this widget's signals (emitted to MainWindow)
         self.analyze_button.clicked.connect(self.analyzeSourcesClicked.emit)
         self.calculate_button.clicked.connect(self.calculateSegmentsClicked.emit)
         self.export_button.clicked.connect(self.exportEdlXmlClicked.emit)
-        logger.debug("ColorPrepTabWidget signals connected.")
 
     @pyqtSlot()
     def _emit_settings_changed(self):
-        """Emits the settingsChanged signal."""
+        """Emit the settingsChanged signal."""
         self.settingsChanged.emit()
 
     @pyqtSlot(int)
     def _update_handles_state(self, state):
-        """Enable/disable end handles spinbox based on checkbox."""
+        """
+        Enable/disable end handles spinbox based on checkbox.
+
+        Args:
+            state: Qt.Checked or Qt.Unchecked
+        """
         is_checked = (state == Qt.Checked)
         self.end_handles_spin.setEnabled(not is_checked)
         if is_checked:
             self.end_handles_spin.setValue(self.start_handles_spin.value())
-        self.settingsChanged.emit()  # Emit change also when checkbox state changes
+        self.settingsChanged.emit()
+
+        # Update handle value in enhanced display widget
+        handle_frames = self.start_handles_spin.value()
+        self.results_widget.set_handle_frames(handle_frames)
 
     @pyqtSlot(int)
     def _update_end_handles_if_linked(self, value):
-        """Sync end handles if checkbox is checked."""
+        """
+        Sync end handles if checkbox is checked.
+
+        Args:
+            value: New value from start_handles_spin
+        """
         if self.same_handles_check.isChecked():
             self.end_handles_spin.blockSignals(True)
             self.end_handles_spin.setValue(value)
             self.end_handles_spin.blockSignals(False)
-            # No need to emit settingsChanged here, it's emitted by start_handles_spin
 
-    # --- Public Methods ---
+        # Update handle value in enhanced display widget
+        self.results_widget.set_handle_frames(value)
+
+    @pyqtSlot(int)
+    def _update_separator_value(self, value):
+        """
+        Update separator frames in the enhanced display widget.
+
+        Args:
+            value: New separator frames value
+        """
+        self.results_widget.set_separator_frames(value)
+
     def get_handles(self) -> Tuple[int, int]:
-        """Returns the number of start and end handle frames."""
+        """
+        Get the number of start and end handle frames.
+
+        Returns:
+            Tuple containing (start_handles, end_handles)
+        """
         start_h = self.start_handles_spin.value()
         end_h = self.end_handles_spin.value() if not self.same_handles_check.isChecked() else start_h
         return start_h, end_h
 
     def get_separator_frames(self) -> int:
-        """Returns the number of frames for the separator gap."""
+        """
+        Get the number of frames for the separator gap.
+
+        Returns:
+            Number of separator frames
+        """
         return self.separator_spin.value()
 
     def get_split_gap_threshold(self) -> int:
-        """Returns the threshold value from the spinbox."""
+        """
+        Get the threshold value for splitting segments.
+
+        Returns:
+            Split gap threshold in frames (-1 if disabled)
+        """
         return self.split_gap_spin.value()
 
     def clear_tab(self):
-        """Resets the tab settings and clears results."""
-        self.start_handles_spin.setValue(24)
+        """Reset the tab settings and clear results."""
+        self.start_handles_spin.setValue(25)
         self.same_handles_check.setChecked(True)
         self.separator_spin.setValue(0)
-        self.split_gap_spin.setValue(-1)  # Reset threshold
-        if hasattr(self.results_widget, 'clear_results'):
-            self.results_widget.clear_results()
+        self.split_gap_spin.setValue(-1)
+
+        self.results_widget.clear_results()
+
         self.update_button_states(False, False, False)
         logger.info("ColorPrepTabWidget cleared.")
 
     def update_button_states(self, can_analyze: bool, can_calculate: bool, can_export: bool):
-        """Updates the enabled state of action buttons on this tab."""
+        """
+        Update the enabled state of action buttons on this tab.
+
+        Args:
+            can_analyze: Whether the Analyze button should be enabled
+            can_calculate: Whether the Calculate button should be enabled
+            can_export: Whether the Export button should be enabled
+        """
         self.analyze_button.setEnabled(can_analyze)
         self.calculate_button.setEnabled(can_calculate)
         self.export_button.setEnabled(can_export)
-        logger.debug(
-            f"ColorPrepTab buttons updated: Analyze={can_analyze}, Calculate={can_calculate}, Export={can_export}")
 
     def load_tab_settings(self, settings: Dict):
-        """Loads settings specific to this tab from a dictionary."""
-        self.start_handles_spin.setValue(settings.get('color_prep_start_handles', 24))
+        """
+        Load settings specific to this tab from a dictionary.
+
+        Args:
+            settings: Dictionary containing tab settings
+        """
+        self.start_handles_spin.setValue(settings.get('color_prep_start_handles', 25))
         same = settings.get('color_prep_same_handles', True)
         self.same_handles_check.setChecked(same)
+
         # Set end value correctly based on checkbox state after loading
         end_val = settings.get('color_prep_end_handles', self.start_handles_spin.value())
         self.end_handles_spin.setValue(end_val if not same else self.start_handles_spin.value())
         self.end_handles_spin.setEnabled(not same)
-        self.separator_spin.setValue(settings.get('color_prep_separator', 0))
-        self.split_gap_spin.setValue(settings.get('split_gap_threshold_frames', -1))  # Load threshold
-        logger.debug("ColorPrepTab settings loaded.")
+
+        # Set separator and gap threshold
+        separator_frames = settings.get('color_prep_separator', 0)
+        self.separator_spin.setValue(separator_frames)
+        self.split_gap_spin.setValue(settings.get('split_gap_threshold_frames', -1))
+
+        # Update enhanced display widget
+        handle_frames = self.start_handles_spin.value()
+        self.results_widget.set_handle_frames(handle_frames)
+        self.results_widget.set_separator_frames(separator_frames)
 
     def get_tab_settings(self) -> Dict:
-        """Retrieves settings specific to this tab as a dictionary."""
+        """
+        Retrieve settings specific to this tab as a dictionary.
+
+        Returns:
+            Dictionary containing the current tab settings
+        """
         start_h, end_h = self.get_handles()
         settings = {
             'color_prep_start_handles': start_h,
             'color_prep_same_handles': self.same_handles_check.isChecked(),
             'color_prep_end_handles': end_h,
             'color_prep_separator': self.get_separator_frames(),
-            'split_gap_threshold_frames': self.get_split_gap_threshold(),  # Get threshold
+            'split_gap_threshold_frames': self.get_split_gap_threshold(),
         }
-        logger.debug("Retrieved settings from ColorPrepTab.")
         return settings
