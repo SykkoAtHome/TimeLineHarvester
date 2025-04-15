@@ -152,6 +152,9 @@ class StateUpdateService:
             # Get segments summary from facade
             segments_summary = self.facade.get_transfer_segments_summary(stage=stage)
 
+            # Log the actual number of segments returned
+            logger.debug(f"Received {len(segments_summary)} {stage} segments from facade")
+
             # Update UI state
             if stage == 'color':
                 self.ui_state.set('color_segments_data', segments_summary)

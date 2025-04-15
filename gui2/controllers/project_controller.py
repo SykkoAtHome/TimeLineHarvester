@@ -122,6 +122,14 @@ class ProjectController(QObject):
                 # Explicitly update analysis results and segments data
                 self.state_update.update_edit_shots_data()
                 self.state_update.update_unresolved_shots_data()
+
+                # Log more information about color segments before updating
+                state = self.facade.get_project_state_snapshot()
+                if state.color_transfer_batch:
+                    logger.debug(f"Color transfer batch has {len(state.color_transfer_batch.segments)} segments")
+                else:
+                    logger.debug("No color transfer batch found in project")
+
                 self.state_update.update_transfer_segments_data('color')
                 self.state_update.update_transfer_segments_data('online')
 
