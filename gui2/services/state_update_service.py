@@ -126,9 +126,16 @@ class StateUpdateService:
             # Get analysis summary from facade
             analysis_summary = self.facade.get_edit_shots_summary()
 
-            # Update UI state
-            self.ui_state.set('analysis_data', analysis_summary)
+
+            logger.debug(f"Updating edit shots data: received {len(analysis_summary)} shots")
+
+
             self.ui_state.set('has_analysis_results', bool(analysis_summary))
+
+
+            self.ui_state.set('analysis_data', [])
+            if analysis_summary:
+                self.ui_state.set('analysis_data', analysis_summary)
 
             # Update workflow capabilities
             state = self.facade.get_project_state_snapshot()

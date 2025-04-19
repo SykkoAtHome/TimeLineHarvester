@@ -10,7 +10,7 @@ import logging
 import os
 from typing import Optional
 
-from PyQt5.QtCore import QObject, pyqtSlot
+from PyQt5.QtCore import QObject, pyqtSlot, QTimer
 
 from core.timeline_harvester_facade import TimelineHarvesterFacade
 from ..models.ui_state_model import UIStateModel
@@ -120,37 +120,14 @@ class ProjectController(QObject):
                 self.state_update.update_from_facade()
 
                 # Explicitly update analysis results and segments data
+                # Ważne - upewnij się, że dane są aktualizowane w odpowiedniej kolejności
                 self.state_update.update_edit_shots_data()
                 self.state_update.update_unresolved_shots_data()
-
-                # Get state for debugging
-                state = self.facade.get_project_state_snapshot()
-
-                # Log color transfer batch info
-                if state.color_transfer_batch:
-                    num_segments = len(state.color_transfer_batch.segments)
-                    logger.debug(f"Color transfer batch has {num_segments} segments")
-
-                    # Add more detailed logging about segments
-                    if num_segments > 0:
-                        for i, segment in enumerate(state.color_transfer_batch.segments):
-                            source_verified = "verified" if (
-                                        segment.original_source and segment.original_source.is_verified) else "not verified"
-                            segment_id = segment.segment_id or f"Segment {i}"
-                            logger.debug(
-                                f"  Segment {i}: ID={segment_id}, Status={segment.status}, Source={source_verified}")
-
-                    # If there are really no segments, log this as a warning
-                    if num_segments == 0:
-                        logger.warning(
-                            "No color segments found in loaded project. Check serialization/deserialization.")
-                else:
-                    logger.debug("No color transfer batch found in project")
-
-                # Update transfer segments data regardless of whether we think there are segments
-                # This ensures UI is updated even if segments exist but were not detected
                 self.state_update.update_transfer_segments_data('color')
                 self.state_update.update_transfer_segments_data('online')
+
+                # Dodaj opóźnione odświeżenie tabeli
+                QTimer.singleShot(100, self._refresh_analysis_view)
 
                 # Publish event
                 self.event_bus.publish(EventData(
@@ -170,6 +147,13 @@ class ProjectController(QObject):
         finally:
             # Reset busy state
             self.ui_state.set_busy("project_loading", False)
+
+    def _refresh_analysis_view(self):
+        """Force refresh the analysis view after loading."""
+        analysis_summary = self.facade.get_edit_shots_summary()
+        if analysis_summary:
+            self.ui_state.set('analysis_data', analysis_summary)
+            self.ui_state.set('has_analysis_results', True)
 
     def save_project(self, file_path: str) -> bool:
         """

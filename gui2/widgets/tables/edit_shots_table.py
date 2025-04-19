@@ -138,6 +138,14 @@ class EditShotsTable(BaseTableWidget):
         Args:
             data: List of edit shot dictionaries
         """
+        logger.debug(f"EditShotsTable populate_table called with {len(data)} items")
+
+        if not data:
+            self.table.clearContents()
+            self.table.setRowCount(0)
+            self.count_label.setText("0 items")
+            return
+
         # Store the data
         self._rows_data = data
 
