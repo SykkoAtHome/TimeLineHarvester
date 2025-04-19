@@ -447,55 +447,85 @@ class TimelineHarvesterFacade:
 
         summary = []
         for i, seg in enumerate(batch.segments):
-            tc_string = "N/A"
-            duration_sec = 0.0
-            rate = seg.original_source.frame_rate if seg.original_source else None
-
-            if seg.transfer_source_range and rate and rate > 0:
-                try:
-                    duration_sec = seg.transfer_source_range.duration.rescaled_to(rate).to_seconds()
-                except:
-                    duration_sec = seg.transfer_source_range.duration.to_seconds()
-                try:
-                    tc_string = opentime.to_timecode(seg.transfer_source_range.start_time.rescaled_to(rate), rate=rate)
-                except:
-                    tc_string = f"{seg.transfer_source_range.start_time.to_seconds():.3f}s (Rate Error)"
-            elif seg.transfer_source_range:
-                duration_sec = seg.transfer_source_range.duration.to_seconds() if seg.transfer_source_range.duration.rate > 0 else 0.0
-                tc_string = f"{seg.transfer_source_range.start_time.to_seconds():.3f}s"
-
+            rate = seg.original_source.frame_rate if seg.original_source and seg.original_source.frame_rate else 25.0 # Domyślna wartość, jeśli brakuje
             source_basename = os.path.basename(seg.original_source.path) if seg.original_source else "N/A"
-            # Get the stored segment ID, fallback to basename if None/empty
             segment_identifier = seg.segment_id if seg.segment_id else source_basename
 
-            # Prepare additional fields for troubleshooting
+            # --- Surowe dane czasowe ---
+            start_rt: Optional[opentime.RationalTime] = None
+            duration_rt: Optional[opentime.RationalTime] = None
+            end_rt_incl: Optional[opentime.RationalTime] = None
+            use_tc_in_rt: Optional[opentime.RationalTime] = None
+            use_tc_out_rt_incl: Optional[opentime.RationalTime] = None
+            duration_sec: float = 0.0
+
+            one_frame = opentime.RationalTime(1, rate) if rate > 0 else None
+
+            # Zakres z handles (Segment TC)
+            if seg.transfer_source_range and rate > 0 and one_frame:
+                try:
+                    start_rt = seg.transfer_source_range.start_time.rescaled_to(rate)
+                    duration_rt = seg.transfer_source_range.duration.rescaled_to(rate)
+                    duration_sec = duration_rt.to_seconds()
+
+                    # Oblicz inkluzywny czas końcowy dla Segment TC OUT
+                    end_time_exclusive = start_rt + duration_rt
+                    # Upewnij się, że duration_rt.value jest dodatnie przed odjęciem ramki
+                    if duration_rt.value > 0:
+                         end_rt_incl = end_time_exclusive - one_frame
+                    else:
+                         # Jeśli duration jest 0 lub ujemne, czas końcowy = czas początkowy
+                         end_rt_incl = start_rt
+                except Exception as e:
+                    logger.warning(f"Error calculating segment TC times for segment {i}: {e}")
+
+            # Zakres bez handles (Use TC)
+            if seg.original_edit_range and rate > 0 and one_frame:
+                try:
+                    use_tc_in_rt = seg.original_edit_range.start_time.rescaled_to(rate)
+                    edit_duration = seg.original_edit_range.duration.rescaled_to(rate)
+
+                    # Oblicz inkluzywny czas końcowy dla Use TC OUT
+                    edit_end_time_exclusive = use_tc_in_rt + edit_duration
+                    # Upewnij się, że edit_duration.value jest dodatnie
+                    if edit_duration.value > 0:
+                         use_tc_out_rt_incl = edit_end_time_exclusive - one_frame
+                    else:
+                         use_tc_out_rt_incl = use_tc_in_rt
+
+                except Exception as e:
+                    logger.warning(f"Error calculating use TC times for segment {i}: {e}")
+
+            # Dane diagnostyczne
             source_verified = seg.original_source.is_verified if seg.original_source else False
             has_range = seg.transfer_source_range is not None
             error_message = seg.error_message or ""
-
-            # If source isn't verified but we have a path, indicate that in the error field
             if not source_verified and seg.original_source and seg.original_source.path:
                 if not error_message:
                     error_message = f"Source file not found: {os.path.basename(seg.original_source.path)}"
 
-            summary.append({
+            # Zbuduj słownik dla interfejsu, przekazując SUROWE dane czasowe
+            summary_item = {
                 "index": i + 1,
                 "segment_id": segment_identifier,
-                "source_basename": source_basename,  # Keep for potential other uses
+                "source_basename": source_basename,
                 "source_path": seg.original_source.path if seg.original_source else "N/A",
-                "range_start_tc": tc_string,
-                "duration_sec": duration_sec,
                 "status": seg.status,
                 "error": error_message,
-                # Pass frame rate and raw time objects for enhanced display
-                'frame_rate': rate,
-                'start_rt': seg.transfer_source_range.start_time if seg.transfer_source_range else None,
-                'duration_rt': seg.transfer_source_range.duration if seg.transfer_source_range else None,
-                # Additional debug fields
+                # --- NOWE/ZAKTUALIZOWANE SUROWE DANE CZASOWE ---
+                'frame_rate': rate, # Przekaż użytą stawkę
+                'start_rt': start_rt,            # Segment TC IN (RationalTime)
+                'end_rt_incl': end_rt_incl,      # Segment TC OUT (RationalTime - INCLUSIVE)
+                'use_tc_in_rt': use_tc_in_rt,      # Use TC IN (RationalTime)
+                'use_tc_out_rt_incl': use_tc_out_rt_incl, # Use TC OUT (RationalTime - INCLUSIVE)
+                'duration_rt': duration_rt,        # Czas trwania segmentu (RationalTime) - dla sortowania/wyświetlania
+                'duration_sec': duration_sec,      # Czas trwania w sekundach (float) - może być nadal użyteczny
+                # --- Dane diagnostyczne ---
                 'source_verified': source_verified,
                 'has_range': has_range
-                # 'source_edit_shots': seg.source_edit_shots # Avoid passing this large list unless needed
-            })
+            }
+
+            summary.append(summary_item)
 
         return summary
 

@@ -232,17 +232,17 @@ def calculate_transfer_batch(
                 min_start_rt = min(r.start_time for r in group_ranges)
                 max_end_rt_excl = max(r.end_time_exclusive() for r in group_ranges)
 
-                # Create the combined unhandled range
-                unhandled_range = opentime.TimeRange(
+                # Create the combined unhandled range (this is the original edit range)
+                original_edit_range = opentime.TimeRange(
                     start_time=min_start_rt,
                     duration=max_end_rt_excl - min_start_rt
                 )
-                logger.debug(f"  Group {group_index}: Combined unhandled range: {unhandled_range}")
+                logger.debug(f"  Group {group_index}: Original edit range (without handles): {original_edit_range}")
 
                 # 2. Apply handles to the combined unhandled range
                 handled_start, handled_end_exclusive = handle_utils.apply_handles_to_range(
-                    unhandled_range.start_time,
-                    unhandled_range.end_time_exclusive(),
+                    original_edit_range.start_time,
+                    original_edit_range.end_time_exclusive(),
                     handle_frames,  # Use the globally passed handle_frames
                     handle_frames  # Assume symmetric for now
                 )
@@ -273,16 +273,16 @@ def calculate_transfer_batch(
                 # 4. Generate segment ID (add suffix if needed)
                 segment_counters[base_filename] += 1
 
-                # POPRAWKA - Lepsze wybieranie nazwy segmentu
-                # Użyj clip_name jako podstawy, jeśli jest dostępny
+                # Better segment name selection
+                # Use clip_name as basis if available
                 segment_id = base_filename
                 if shot_group and len(shot_group) > 0:
                     representative_shot = shot_group[0]
                     if representative_shot.clip_name:
-                        # Użyj nazwy pierwszego shota jako bazowej nazwy segmentu
+                        # Use the first shot's name as the base segment name
                         segment_id = representative_shot.clip_name
 
-                # Dodaj sufiks tylko jeśli jest więcej niż jeden segment dla tego źródła
+                # Add suffix only if there is more than one segment for this source
                 if len(list_of_shot_groups) > 1:
                     segment_id = f"{segment_id}_seg{segment_counters[base_filename]}"
 
@@ -290,15 +290,12 @@ def calculate_transfer_batch(
                 transfer_segment = TransferSegment(
                     original_source=original_source,
                     transfer_source_range=final_transfer_range,
+                    original_edit_range=original_edit_range,  # Store original range without handles
                     output_targets={},  # Populated later if needed (e.g., for transcoding)
                     source_edit_shots=shot_group,  # Link back to the shots in this group
                     status="calculated",
                     segment_id=segment_id  # Store the generated ID
                 )
-
-                # Add metadata to segment if needed (though segment_id field exists)
-                # if not hasattr(transfer_segment, 'metadata'): transfer_segment.metadata = {}
-                # transfer_segment.metadata['segment_id'] = segment_id
 
                 batch.segments.append(transfer_segment)
                 logger.debug(

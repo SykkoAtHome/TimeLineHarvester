@@ -138,20 +138,24 @@ class TransferSegment:
 
     Attributes:
         original_source: Reference to the OriginalSourceFile.
-        transfer_source_range: Time range within the original source to read (incl. handles).
+        transfer_source_range: Time range within the original source to read (including handles).
+        original_edit_range: Original time range before adding handles, representing raw edit usage.
         output_targets: Dict mapping OutputProfile.name to the output file path.
         status: Current processing status ('pending', 'calculated', 'running', etc.).
         error_message: Error message related to processing this segment.
         segment_id: Optional unique identifier for the segment.
         source_edit_shots: List of EditShots contributing to this segment.
+        metadata: Additional metadata, mainly for UI display purposes.
     """
     original_source: OriginalSourceFile
-    transfer_source_range: TimeRange
+    transfer_source_range: TimeRange  # Range with handles
+    original_edit_range: Optional[TimeRange] = None  # Original range without handles
     output_targets: Dict[str, str] = field(default_factory=dict)
     status: str = "pending"
     error_message: Optional[str] = None
     segment_id: Optional[str] = None
     source_edit_shots: List[EditShot] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

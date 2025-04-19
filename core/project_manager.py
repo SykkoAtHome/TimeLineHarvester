@@ -194,18 +194,22 @@ class ProjectManager:
                                id(s_shot) in edit_shots_id_map]
             covered_indices = [idx for idx in covered_indices if idx is not None]  # Filter out None values
 
-            # Normalize path for storage
-            original_source_path = normalize_path_for_storage(seg.original_source.path) if seg.original_source else None
+            # Ensure segment has metadata dictionary
+            if not hasattr(seg, 'metadata'):
+                seg.metadata = {}
 
             # Serialize segment data
             serialized_segments.append({
-                "original_source_path": original_source_path,
-                "transfer_source_range": time_to_json(seg.transfer_source_range),
+                "original_source_path": normalize_path_for_storage(
+                    seg.original_source.path) if seg.original_source else None,
+                "transfer_source_range": time_to_json(seg.transfer_source_range),  # Z handles
+                "original_edit_range": time_to_json(seg.original_edit_range),  # Bez handles (DODANE)
                 "output_targets": {k: normalize_path_for_storage(v) for k, v in seg.output_targets.items()},
                 "status": seg.status,
                 "error_message": seg.error_message,
                 "source_edit_shots_indices": covered_indices,
-                "segment_id": seg.segment_id
+                "segment_id": seg.segment_id,
+                "metadata": seg.metadata
             })
 
         # Get indices of unresolved shots
@@ -289,6 +293,8 @@ class ProjectManager:
                 if isinstance(seg_data, dict):
                     source_path_serialized = seg_data.get("original_source_path")
                     transfer_range = time_from_json(seg_data.get("transfer_source_range"))
+
+                    original_edit_range = time_from_json(seg_data.get("original_edit_range"))
 
                     # Get original source from cache using universal path matching
                     original_source = None
@@ -394,15 +400,18 @@ class ProjectManager:
                     output_targets = {k: normalize_path_for_system(v) for k, v in output_targets_serialized.items()}
 
                     # Create TransferSegment, including segment_id
+                    segment_metadata = seg_data.get("metadata", {})
                     segment = TransferSegment(
                         original_source=original_source,
                         transfer_source_range=transfer_range,
+                        original_edit_range=original_edit_range,  # DODANE
                         output_targets=output_targets,
                         status=seg_data.get("status", "calculated"),
                         error_message=seg_data.get("error_message"),
                         source_edit_shots=covered_shots,
-                        segment_id=seg_data.get("segment_id")  # Use .get for backward compatibility
+                        segment_id=seg_data.get("segment_id")
                     )
+                    segment.metadata = segment_metadata
 
                     # If source is missing, update segment status
                     if not original_source.is_verified:
