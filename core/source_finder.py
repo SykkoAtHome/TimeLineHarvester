@@ -166,9 +166,6 @@ class SourceFinder:
         """
         Directly verifies a media file using ffprobe.
 
-        This is the original implementation from the source_finder module.
-        Kept for compatibility and as a fallback if the analyzer fails.
-
         Returns:
             A dictionary with metadata information if verification succeeds, None otherwise.
         """
@@ -176,6 +173,11 @@ class SourceFinder:
             return None
 
         try:
+            # Import required modules
+            import subprocess
+            import json
+            import opentimelineio as otio  # Add this import explicitly
+
             # Choose the appropriate command based on file type
             is_mxf = file_path.lower().endswith('.mxf')
 
@@ -201,9 +203,6 @@ class SourceFinder:
 
             logger.debug(f"Running ffprobe command: {' '.join(command)}")
 
-            import subprocess
-            import json
-
             result = subprocess.run(
                 command,
                 capture_output=True,
@@ -226,7 +225,7 @@ class SourceFinder:
                 logger.error(f"Failed to parse ffprobe JSON output: {e}")
                 return None
 
-            # Legacy parsing approach
+            # Prepare result dictionary
             info = {'metadata': {}}
 
             if not data or 'streams' not in data or not data['streams']:
@@ -246,11 +245,13 @@ class SourceFinder:
 
             # Extract frame rate
             rate_str = video_stream.get('r_frame_rate') or video_stream.get('avg_frame_rate')
+            current_rate = None
             if rate_str and '/' in rate_str:
                 try:
                     n, d = map(float, rate_str.split('/'))
                     if d > 0:
-                        info['frame_rate'] = n / d
+                        current_rate = n / d
+                        info['frame_rate'] = current_rate
                     else:
                         logger.warning(f"Invalid frame rate denominator in '{rate_str}'")
                         return None
@@ -261,25 +262,61 @@ class SourceFinder:
                 logger.warning(f"No valid frame rate found for '{file_path}'")
                 return None
 
-            # Current frame rate for time calculations
-            current_rate = info['frame_rate']
+            # Extract format_data before using it
+            format_data = data.get('format', {})
 
             # Extract duration
-            format_data = data.get('format', {})
             duration_str = video_stream.get('duration') or format_data.get('duration')
 
             if duration_str:
                 try:
-                    # Handle different duration formats
-                    if isinstance(duration_str, str) and ':' in duration_str:
-                        # Format is like "0:01:24.800000" (sexagesimal)
-                        duration_rt = opentime.from_timecode(duration_str, current_rate)
-                    else:
-                        # Format is numeric (seconds)
-                        duration_secs = float(duration_str)
-                        duration_rt = opentime.RationalTime(duration_secs * current_rate, current_rate)
+                    # Improved duration parsing - handles both formats
+                    duration_rt = None
 
-                    info['duration'] = duration_rt
+                    if isinstance(duration_str, str):
+                        if ':' in duration_str:
+                            # Format could be hh:mm:ss:ff (standard timecode) or hh:mm:ss.fraction
+                            parts = duration_str.split(':')
+
+                            # Check if we have hh:mm:ss.fraction format
+                            if len(parts) == 3 and '.' in parts[2]:
+                                # Format is like "0:01:24.800000" (decimal seconds)
+                                hours, minutes, seconds_with_fraction = parts
+                                total_seconds = (int(hours) * 3600) + (int(minutes) * 60) + float(seconds_with_fraction)
+                                duration_rt = otio.opentime.RationalTime(total_seconds * current_rate, current_rate)
+                            else:
+                                # Try standard timecode parsing first
+                                try:
+                                    duration_rt = otio.opentime.from_timecode(duration_str, current_rate)
+                                except ValueError:
+                                    # If that fails, try more flexible parsing
+                                    try:
+                                        duration_rt = otio.opentime.from_time_string(duration_str, current_rate)
+                                    except Exception as inner_e:
+                                        logger.warning(f"Failed to parse time string '{duration_str}': {inner_e}")
+                                        # Try the last method below
+                        else:
+                            # Could be numeric (seconds)
+                            try:
+                                duration_secs = float(duration_str)
+                                duration_rt = otio.opentime.RationalTime(duration_secs * current_rate, current_rate)
+                            except ValueError as ve:
+                                logger.warning(f"Could not parse duration as float: {duration_str}: {ve}")
+                                return None
+                    else:
+                        # Might already be a number (float/int)
+                        try:
+                            duration_secs = float(duration_str)
+                            duration_rt = otio.opentime.RationalTime(duration_secs * current_rate, current_rate)
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Could not convert duration to float: {duration_str}: {e}")
+                            return None
+
+                    if duration_rt:
+                        info['duration'] = duration_rt
+                    else:
+                        logger.warning(f"Could not parse duration '{duration_str}' in any supported format")
+                        return None
                 except Exception as e:
                     logger.warning(f"Error parsing duration '{duration_str}': {e}")
                     return None
@@ -292,24 +329,24 @@ class SourceFinder:
             if tag_timecode_str:
                 try:
                     # First try standard timecode format
-                    start_timecode_rt = opentime.from_timecode(tag_timecode_str, current_rate)
+                    start_timecode_rt = otio.opentime.from_timecode(tag_timecode_str, current_rate)
                     info['start_timecode'] = start_timecode_rt
                 except ValueError:
                     try:
                         # Fallback to more flexible parsing
-                        start_timecode_rt = opentime.from_time_string(tag_timecode_str, current_rate)
+                        start_timecode_rt = otio.opentime.from_time_string(tag_timecode_str, current_rate)
                         info['start_timecode'] = start_timecode_rt
                     except Exception as e:
                         logger.warning(f"Could not parse timecode '{tag_timecode_str}': {e}")
                         # Default to zero if parsing fails
-                        info['start_timecode'] = opentime.RationalTime(0, current_rate)
+                        info['start_timecode'] = otio.opentime.RationalTime(0, current_rate)
                 except Exception as e:
                     logger.warning(f"Error parsing timecode '{tag_timecode_str}': {e}")
                     # Default to zero if parsing fails
-                    info['start_timecode'] = opentime.RationalTime(0, current_rate)
+                    info['start_timecode'] = otio.opentime.RationalTime(0, current_rate)
             else:
                 # No timecode found, default to zero
-                info['start_timecode'] = opentime.RationalTime(0, current_rate)
+                info['start_timecode'] = otio.opentime.RationalTime(0, current_rate)
 
             # Save additional metadata
             for key in ['width', 'height', 'codec_name']:
