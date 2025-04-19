@@ -120,14 +120,12 @@ class ProjectController(QObject):
                 self.state_update.update_from_facade()
 
                 # Explicitly update analysis results and segments data
-                # Ważne - upewnij się, że dane są aktualizowane w odpowiedniej kolejności
                 self.state_update.update_edit_shots_data()
                 self.state_update.update_unresolved_shots_data()
                 self.state_update.update_transfer_segments_data('color')
                 self.state_update.update_transfer_segments_data('online')
 
-                # Dodaj opóźnione odświeżenie tabeli
-                QTimer.singleShot(100, self._refresh_analysis_view)
+                QTimer.singleShot(200, self._refresh_analysis_view)
 
                 # Publish event
                 self.event_bus.publish(EventData(
