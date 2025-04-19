@@ -139,9 +139,6 @@ class ProjectManager:
             settings.color_prep_start_handles = config_data.get("color_prep_handles", 25)
 
         settings.color_prep_end_handles = config_data.get("color_prep_end_handles", settings.color_prep_start_handles)
-        # Backward compatibility for linked handles
-        settings.color_same_handles = config_data.get("color_same_handles",
-                                                      settings.color_prep_start_handles == settings.color_prep_end_handles)
 
         settings.color_prep_separator = config_data.get("color_prep_separator", 0)
         settings.split_gap_threshold_frames = config_data.get("split_gap_threshold_frames", -1)
@@ -169,7 +166,6 @@ class ProjectManager:
             "output_profiles": [p.__dict__ for p in settings.output_profiles],
             "color_prep_start_handles": settings.color_prep_start_handles,
             "color_prep_end_handles": settings.color_prep_end_handles,
-            # "color_same_handles": settings.color_same_handles,  # Save linked state
             "color_prep_separator": settings.color_prep_separator,
             "split_gap_threshold_frames": settings.split_gap_threshold_frames,
             "online_prep_handles": settings.online_prep_handles,
